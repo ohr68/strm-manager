@@ -118,6 +118,11 @@ dotnet ef migrations add <Name> \
   --output-dir Database/Migrations
 ```
 
+`Microsoft.EntityFrameworkCore.Design` is referenced only by `StrmManager.Api` (the
+`--startup-project`), not by `Catalog.Infrastructure` - that's the only place the `dotnet
+ef` tooling actually needs it. Don't add it back to the migrations project itself unless
+a future startup project stops referencing `Catalog.Infrastructure` transitively.
+
 ## Tests
 
 ```bash

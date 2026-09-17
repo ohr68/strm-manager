@@ -6,7 +6,6 @@
   <Folder Name="/src/Common/">
     <Project Path="src/Common/StrmManager.Common.Application/StrmManager.Common.Application.csproj" />
     <Project Path="src/Common/StrmManager.Common.Domain/StrmManager.Common.Domain.csproj" />
-    <Project Path="src/Common/StrmManager.Common.Infrastructure/StrmManager.Common.Infrastructure.csproj" />
     <Project Path="src/Common/StrmManager.Common.Presentation/StrmManager.Common.Presentation.csproj" />
   </Folder>
   <Folder Name="/src/Modules/" />

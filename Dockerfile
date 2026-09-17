@@ -9,7 +9,6 @@ COPY StrmManager.slnx .
 COPY src/Api/StrmManager.Api/StrmManager.Api.csproj src/Api/StrmManager.Api/
 COPY src/Common/StrmManager.Common.Domain/StrmManager.Common.Domain.csproj src/Common/StrmManager.Common.Domain/
 COPY src/Common/StrmManager.Common.Application/StrmManager.Common.Application.csproj src/Common/StrmManager.Common.Application/
-COPY src/Common/StrmManager.Common.Infrastructure/StrmManager.Common.Infrastructure.csproj src/Common/StrmManager.Common.Infrastructure/
 COPY src/Common/StrmManager.Common.Presentation/StrmManager.Common.Presentation.csproj src/Common/StrmManager.Common.Presentation/
 COPY src/Modules/Catalog/StrmManager.Modules.Catalog.Domain/StrmManager.Modules.Catalog.Domain.csproj src/Modules/Catalog/StrmManager.Modules.Catalog.Domain/
 COPY src/Modules/Catalog/StrmManager.Modules.Catalog.Application/StrmManager.Modules.Catalog.Application.csproj src/Modules/Catalog/StrmManager.Modules.Catalog.Application/
