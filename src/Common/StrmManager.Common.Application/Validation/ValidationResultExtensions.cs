@@ -12,7 +12,22 @@ public static class ValidationResultExtensions
             return Result.Success();
         }
 
+        return Result.Failure(BuildValidationError(validationResult));
+    }
+
+    public static Result<TValue> ToApplicationResult<TValue>(this ValidationResult validationResult)
+    {
+        if (validationResult.IsValid)
+        {
+            throw new InvalidOperationException("A valid FluentValidation result has no error to convert.");
+        }
+
+        return Result.Failure<TValue>(BuildValidationError(validationResult));
+    }
+
+    private static Error BuildValidationError(ValidationResult validationResult)
+    {
         string description = string.Join(" ", validationResult.Errors.Select(failure => failure.ErrorMessage));
-        return Result.Failure(Error.Validation("Validation.Error", description));
+        return Error.Validation("Validation.Error", description);
     }
 }

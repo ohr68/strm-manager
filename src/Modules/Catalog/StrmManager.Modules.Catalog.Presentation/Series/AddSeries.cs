@@ -2,7 +2,6 @@ using FluentValidation;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Routing;
 using StrmManager.Common.Application.Messaging;
-using StrmManager.Common.Application.Validation;
 using StrmManager.Common.Domain.Abstractions;
 using StrmManager.Common.Presentation.ApiResults;
 using StrmManager.Common.Presentation.Endpoints;
@@ -30,14 +29,7 @@ internal sealed class AddSeries : IEndpoint
                 request.OriginalTitle,
                 request.Year);
 
-            FluentValidation.Results.ValidationResult validationResult = await validator.ValidateAsync(command, cancellationToken);
-
-            if (!validationResult.IsValid)
-            {
-                return ApiResults.Problem(validationResult.ToApplicationResult());
-            }
-
-            Result<Guid> result = await handler.Handle(command, cancellationToken);
+            Result<Guid> result = await handler.HandleValidated(command, validator, cancellationToken);
 
             return result.Match(
                 id => HttpResults.Created($"/api/series/{id}", new { id }),
