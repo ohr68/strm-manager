@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\Modules\Catalog\StrmManager.Modules.Catalog.Presentation\StrmManager.Modules.Catalog.Presentation.csproj" />
+    <ProjectReference Include="..\..\Modules\Catalog\StrmManager.Modules.Catalog.Infrastructure\StrmManager.Modules.Catalog.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\Modules\Catalog\StrmManager.Modules.Catalog.Application\StrmManager.Modules.Catalog.Application.csproj" />
+    <ProjectReference Include="..\..\Common\StrmManager.Common.Infrastructure\StrmManager.Common.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\Common\StrmManager.Common.Presentation\StrmManager.Common.Presentation.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.12" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.12">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="Microsoft.Extensions.Diagnostics.HealthChecks.EntityFrameworkCore" Version="10.0.12" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+</Project>

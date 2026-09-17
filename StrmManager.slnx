@@ -1,0 +1,24 @@
+<Solution>
+  <Folder Name="/src/" />
+  <Folder Name="/src/Api/">
+    <Project Path="src/Api/StrmManager.Api/StrmManager.Api.csproj" />
+  </Folder>
+  <Folder Name="/src/Common/">
+    <Project Path="src/Common/StrmManager.Common.Application/StrmManager.Common.Application.csproj" />
+    <Project Path="src/Common/StrmManager.Common.Domain/StrmManager.Common.Domain.csproj" />
+    <Project Path="src/Common/StrmManager.Common.Infrastructure/StrmManager.Common.Infrastructure.csproj" />
+    <Project Path="src/Common/StrmManager.Common.Presentation/StrmManager.Common.Presentation.csproj" />
+  </Folder>
+  <Folder Name="/src/Modules/" />
+  <Folder Name="/src/Modules/Catalog/">
+    <Project Path="src/Modules/Catalog/StrmManager.Modules.Catalog.Application/StrmManager.Modules.Catalog.Application.csproj" />
+    <Project Path="src/Modules/Catalog/StrmManager.Modules.Catalog.Domain/StrmManager.Modules.Catalog.Domain.csproj" />
+    <Project Path="src/Modules/Catalog/StrmManager.Modules.Catalog.Infrastructure/StrmManager.Modules.Catalog.Infrastructure.csproj" />
+    <Project Path="src/Modules/Catalog/StrmManager.Modules.Catalog.Presentation/StrmManager.Modules.Catalog.Presentation.csproj" />
+  </Folder>
+  <Folder Name="/test/">
+    <Project Path="test/StrmManager.ArchitectureTests/StrmManager.ArchitectureTests.csproj" />
+    <Project Path="test/StrmManager.Modules.Catalog.IntegrationTests/StrmManager.Modules.Catalog.IntegrationTests.csproj" />
+    <Project Path="test/StrmManager.Modules.Catalog.UnitTests/StrmManager.Modules.Catalog.UnitTests.csproj" />
+  </Folder>
+</Solution>

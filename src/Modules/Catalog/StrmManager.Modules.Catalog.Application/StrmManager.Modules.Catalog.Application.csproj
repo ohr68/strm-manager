@@ -1,0 +1,14 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\StrmManager.Modules.Catalog.Domain\StrmManager.Modules.Catalog.Domain.csproj" />
+    <ProjectReference Include="..\..\..\Common\StrmManager.Common.Application\StrmManager.Common.Application.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+</Project>

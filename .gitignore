@@ -1,0 +1,53 @@
+## .NET
+bin/
+obj/
+*.user
+*.userosscache
+*.sln.docstates
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Ll]og/
+[Ll]ogs/
+
+## Rider / JetBrains
+.idea/
+*.sln.iml
+
+## VS Code
+.vscode/
+
+## Visual Studio
+.vs/
+
+## Test results
+[Tt]est[Rr]esult*/
+*.trx
+*.coverage
+*.coveragexml
+
+## SQLite local data
+*.db
+*.db-shm
+*.db-wal
+src/Api/StrmManager.Api/data/
+
+## Docker
+docker-compose.override.local.yml
+
+## Secrets
+appsettings.*.local.json
+.env
+.env.*
+
+## OS
+.DS_Store
+Thumbs.db
+
+## NuGet
+*.nupkg
+**/packages/
+project.lock.json
+project.fragment.lock.json
+artifacts/
