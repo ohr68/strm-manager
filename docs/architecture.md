@@ -22,16 +22,25 @@ cannot depend on Infrastructure/Presentation, Presentation cannot depend on Infr
 StrmManager.Api
   |-- Catalog.Presentation --> Catalog.Application --> Catalog.Domain
   |-- Catalog.Infrastructure --> Catalog.Application, Catalog.Domain
-  |-- Common.Infrastructure, Common.Presentation
+  |-- Common.Presentation
 
 Common.Presentation --> Common.Application --> Common.Domain
-Common.Infrastructure --> Common.Application, Common.Domain
 ```
 
 Planned modules (`Providers`, `MediaProcessing`, `Scheduling`) will depend on
 `Catalog.Domain` (they operate on `Episode`/`Movie`) and `Catalog.Application`
 (repositories, `IUnitOfWork`), but `Catalog` will never depend back on them - see
 [ADR-004](adr/ADR-004-provider-abstractions.md).
+
+There is no `Common.Infrastructure` project. It existed in the initial foundation as an
+empty shell (mirroring Evently's `Evently.Common.Infrastructure`, which holds shared
+Outbox/Inbox/EventBus/Auth/Caching plumbing this project doesn't have), with zero source
+files and two unused package references. Phase 1.1 removed it rather than keep an empty
+project around "just in case" - nothing here currently needs cross-module shared
+infrastructure that isn't already covered by `Common.Domain`/`Common.Application`/
+`Common.Presentation`. Reintroduce it the day a second module needs to share concrete
+infrastructure code (e.g. a common HTTP resilience policy setup once `Providers` exists)
+rather than before.
 
 ## Why no MediatR / no Outbox-Inbox
 
@@ -53,6 +62,20 @@ Instead:
   somewhere to record what happened), but nothing dispatches them yet - there is no
   consumer. They will be wired up (in-process, synchronous, no Outbox) the moment a real
   consumer exists, per "don't add events without a real consumer."
+
+**Validation** follows the same no-framework spirit: endpoints resolve `IValidator<TCommand>`
+and the command's `ICommandHandler<,>` explicitly via DI (both are ordinary parameters on
+the Minimal API delegate - no hidden pipeline), and call
+`handler.HandleValidated(command, validator, cancellationToken)` - a small extension
+method (`StrmManager.Common.Application.Messaging.ValidatedCommandHandlerExtensions`)
+that runs the validator, short-circuits to a `Result.Failure` on invalid input, and
+otherwise calls the handler. It replaces what would otherwise be a repeated 6-line
+"validate, check `IsValid`, map to `Result`, return early" block copy-pasted into every
+command endpoint - not a decorator, not a registered pipeline step, just a helper method.
+A MediatR-style automatic pipeline was considered and rejected: with the current number
+of command endpoints (one), the explicit two-parameter call site is easier to read and
+debug than a registered pipeline behavior would be, and it costs nothing to add one more
+call site as new commands appear.
 
 ## Episode state machine
 
@@ -90,6 +113,15 @@ Rules enforced by `Episode` (and mirrored by `Movie`) in
   and a terminal state simply leaves the row as `Pending` in the database - the next
   scheduler tick picks it up again. Nothing can get permanently stuck in `Searching`/
   `Validating`.
+
+**On the `Episode`/`Movie` duplication**: `Movie`'s state machine is currently a
+line-for-line copy of `Episode`'s (same seven transition methods, same guards). This is
+known and deliberately left alone for now - the duplication is small, and it's not yet
+clear the two aggregates will stay identical once `MediaProcessing`/`Scheduling` exist
+(e.g. movies have no `SeasonNumber`/`EpisodeNumber` concept and may end up with different
+retry policy shapes). Extracting a shared base/state-machine abstraction before a second
+real divergence shows up would be guessing at the wrong boundary. Revisit once
+`Scheduling` is implemented and it's clear whether the two really do stay in lockstep.
 
 ## Processing pipeline (planned - Providers/MediaProcessing/Scheduling)
 
