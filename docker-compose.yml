@@ -1,0 +1,19 @@
+services:
+  strm-manager:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: strm-manager:latest
+    container_name: strm-manager
+    restart: unless-stopped
+    ports:
+      - "8099:8080"
+    volumes:
+      - strm-manager-data:/app/data
+      - strm-manager-stream:/stream
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+
+volumes:
+  strm-manager-data:
+  strm-manager-stream:
