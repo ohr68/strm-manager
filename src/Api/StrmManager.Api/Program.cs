@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using StrmManager.Api.Middleware;
 using StrmManager.Common.Presentation.Endpoints;
 using StrmManager.Modules.Catalog.Infrastructure;
 using StrmManager.Modules.Catalog.Infrastructure.Database;
@@ -17,7 +18,15 @@ builder.Services
 
 builder.Services.AddOpenApi();
 
+// Global exception handling for unexpected technical failures only - expected
+// domain/application failures never throw, they flow through Result/Error ->
+// StrmManager.Common.Presentation.ApiResults instead (see ADR-005 and architecture.md).
+builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
+builder.Services.AddProblemDetails();
+
 WebApplication app = builder.Build();
+
+app.UseExceptionHandler();
 
 if (app.Environment.IsDevelopment())
 {
