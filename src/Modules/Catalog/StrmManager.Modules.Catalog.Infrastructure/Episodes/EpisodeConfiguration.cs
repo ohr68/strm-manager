@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using StrmManager.Modules.Catalog.Domain.Episodes;
+using StrmManager.Modules.Catalog.Domain.Seasons;
 
 namespace StrmManager.Modules.Catalog.Infrastructure.Episodes;
 
@@ -21,5 +22,13 @@ internal sealed class EpisodeConfiguration : IEntityTypeConfiguration<Episode>
         builder.HasIndex(episode => episode.Status);
         builder.HasIndex(episode => episode.ReleaseAtUtc);
         builder.HasIndex(episode => episode.NextAttemptAtUtc);
+
+        // Same reasoning as Series -> Season (see SeasonConfiguration / ADR-005):
+        // FK-only relationship, no navigation property, Restrict delete.
+        builder.HasOne<Season>()
+            .WithMany()
+            .HasForeignKey(episode => episode.SeasonId)
+            .OnDelete(DeleteBehavior.Restrict)
+            .IsRequired();
     }
 }

@@ -1,4 +1,5 @@
 using FluentValidation;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -28,7 +29,15 @@ public static class CatalogModule
         string connectionString = configuration.GetConnectionString("Database")
             ?? throw new InvalidOperationException("The 'Database' connection string is not configured.");
 
-        services.AddDbContext<CatalogDbContext>(options => options.UseSqlite(connectionString));
+        // Microsoft.Data.Sqlite does not enforce FK constraints unless explicitly asked
+        // to - without this, the Restrict/cascade behaviors configured on the
+        // Series/Season/Episode relationships would be silently ignored at runtime.
+        var sqliteConnectionStringBuilder = new SqliteConnectionStringBuilder(connectionString)
+        {
+            ForeignKeys = true,
+        };
+
+        services.AddDbContext<CatalogDbContext>(options => options.UseSqlite(sqliteConnectionStringBuilder.ConnectionString));
 
         services.AddScoped<IUnitOfWork>(sp => sp.GetRequiredService<CatalogDbContext>());
 
