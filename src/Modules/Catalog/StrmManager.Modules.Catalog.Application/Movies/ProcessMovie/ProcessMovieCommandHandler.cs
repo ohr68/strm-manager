@@ -8,15 +8,17 @@ using StrmManager.Modules.Catalog.Domain.Movies;
 using StrmManager.Modules.Catalog.Domain.Shared;
 using StrmManager.Modules.Catalog.Domain.SourceAttempts;
 using StrmManager.Modules.Catalog.Domain.StrmFiles;
+using StrmManager.Modules.MediaProcessing.Application.StrmGeneration;
 using StrmManager.Modules.MediaProcessing.Application.Streams;
+using StrmManager.Modules.MediaProcessing.Application.Streams.MovieIdentity;
 using StrmManager.Modules.MediaProcessing.Application.Validation;
 
 namespace StrmManager.Modules.Catalog.Application.Movies.ProcessMovie;
 
 /// <summary>
-/// Movie counterpart of ProcessEpisodeCommandHandler, built up in stages. Through Phase 6.2c
-/// it runs: claim -> provider lookup -> media validation of the candidates -> stop at the
-/// boundary before download / STRM generation (a later phase).
+/// Movie counterpart of ProcessEpisodeCommandHandler: claim -> provider lookup -> per candidate
+/// (unsupported-headers check -> movie identity check -> ffprobe media validation) -> first
+/// approved candidate -> write the movie .strm -> StrmFile -> Completed.
 ///
 /// The claim comes first and is durable before anything else: the Movie is moved
 /// Pending -> Searching and that claim is PERSISTED through the concurrency-aware save
@@ -28,8 +30,16 @@ namespace StrmManager.Modules.Catalog.Application.Movies.ProcessMovie;
 /// the outcome's transaction.
 ///
 /// Outcomes mirror Episode: a provider failure is a retryable Error (RetryableErrorDelay), no
-/// candidates - or none that pass validation - is Unavailable (UnavailableRetryDelay), and a
-/// candidate that passes leaves the Movie Validating with its SourceAttempts persisted.
+/// candidates - or none that pass the checks - is Unavailable (UnavailableRetryDelay), and a
+/// .strm write failure is a non-retryable Error. A run that gets past the claim always ends in
+/// Completed, Unavailable or Error - never left Validating (short of a crash or cancellation,
+/// which the maintenance sweep recovers, exactly as for Episode).
+///
+/// Identity (MovieIdentityValidator) is positive-evidence-only: a candidate with no explicit
+/// matching IMDb id, TMDB id or "(YYYY)" is rejected without ever reaching ffprobe - the same
+/// candidate list can be served for several different same-title movies, so a title is never
+/// trusted. Candidates that need custom request headers are unsupported (a plain .strm cannot
+/// carry them) and are rejected before identity or ffprobe.
 /// </summary>
 internal sealed partial class ProcessMovieCommandHandler(
     IMovieRepository movieRepository,
@@ -37,6 +47,7 @@ internal sealed partial class ProcessMovieCommandHandler(
     IStrmFileRepository strmFileRepository,
     IStreamProvider streamProvider,
     IMediaValidator mediaValidator,
+    IStrmWriter strmWriter,
     IUnitOfWork unitOfWork,
     IOptions<ProcessingOptions> processingOptions,
     TimeProvider timeProvider,
@@ -127,11 +138,37 @@ internal sealed partial class ProcessMovieCommandHandler(
 
         int attemptsThisRun = 0;
         StreamCandidate? approvedCandidate = null;
+        var identityReference = new MovieIdentityReference(movie.ExternalIds.ImdbId, movie.ExternalIds.TmdbId, movie.Year);
 
         foreach (StreamCandidate candidate in candidates)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
+            // 1) Capability: a stream that needs custom request headers cannot be played from a
+            // plain .strm and cannot be probed by the current validator - unsupported, so it is
+            // rejected before anything is spent on it. Only that fact is known, never the values.
+            if (candidate.RequiresCustomHeaders)
+            {
+                RejectWithoutMediaValidation(movie, candidate, "Candidate requires custom request headers, which are not supported.", ref attemptsThisRun);
+                continue;
+            }
+
+            // 2) Identity, from the candidate's own explicit evidence only. Anything but an
+            // explicit IMDb/TMDB match or matching "(YYYY)" is rejected - and never reaches ffprobe.
+            MovieIdentityMatch identityMatch = MovieIdentityValidator.Evaluate(
+                candidate.Name, candidate.Description, candidate.TmdbId, identityReference);
+
+            if (identityMatch is not (MovieIdentityMatch.Confirmed or MovieIdentityMatch.Compatible))
+            {
+                string reason = identityMatch == MovieIdentityMatch.Conflicting
+                    ? "Candidate references a different movie."
+                    : "Could not confirm the candidate's movie identity.";
+
+                RejectWithoutMediaValidation(movie, candidate, reason, ref attemptsThisRun);
+                continue;
+            }
+
+            // 3) Media validation (ffprobe).
             var validationReference = new MediaValidationReference(movie.Runtime);
             MediaValidationResult validationResult = await mediaValidator.ValidateAsync(candidate, validationReference, cancellationToken);
 
@@ -153,21 +190,57 @@ internal sealed partial class ProcessMovieCommandHandler(
 
         if (approvedCandidate is null)
         {
-            return await FinishAsUnavailable(movie, "No candidate passed media validation.", cancellationToken, attemptsThisRun);
+            return await FinishAsUnavailable(movie, "No candidate passed identity/media validation.", cancellationToken, attemptsThisRun);
         }
 
-        // SAVE #3 - the boundary. A candidate passed, and this phase stops here: the movie
-        // stays Validating (there is no download or STRM step yet, so it is neither
-        // Completed nor given an outcome), and the SourceAttempts - the approved one
-        // included - are persisted. Continuing from this point is a later phase's job.
+        // The approved candidate's URL is the .strm's content - handed straight to the writer and
+        // never logged, persisted, or put in an error or the response.
+        var strmReference = new MovieStrmReference(movie.Title, movie.Year, movie.ExternalIds.ImdbId);
+        Result<string> writeResult = await strmWriter.WriteMovieAsync(strmReference, approvedCandidate.Url, cancellationToken);
+
+        if (writeResult.IsFailure)
+        {
+            // Filesystem/path failures (traversal rejection, permission, disk) are treated as
+            // potentially persistent configuration problems, not hammered automatically - the same
+            // policy as Episode (ADR-013). The movie is NOT Completed and no StrmFile is created;
+            // the SourceAttempts recorded this run are persisted together with the Error.
+            return await FinishAsError(movie, $"Failed to write .strm file: {writeResult.Error.Description}", isRetryable: false, cancellationToken, attemptsThisRun);
+        }
+
+        StrmFile? existingStrmFile = await strmFileRepository.GetForMovieAsync(movie.Id, cancellationToken);
+        DateTime utcNow = timeProvider.GetUtcNow().UtcDateTime;
+
+        if (existingStrmFile is null)
+        {
+            strmFileRepository.Insert(StrmFile.ForMovie(movie.Id, writeResult.Value, utcNow));
+        }
+        else
+        {
+            existingStrmFile.Overwrite(writeResult.Value, utcNow);
+        }
+
+        movie.MarkCompleted(utcNow);
+
+        // Final SAVE - the Completed movie, its StrmFile and this run's SourceAttempts together.
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
-        LogValidCandidateFound(logger, movie.Id, attemptsThisRun);
+        LogMovieCompleted(logger, movie.Id, attemptsThisRun);
 
         return new ProcessMovieResult(
-            movie.Id, MediaStatus.Validating.ToString(), attemptsThisRun,
-            new SelectedMovieSource(approvedCandidate.Provider, approvedCandidate.Name), null,
-            "A candidate passed validation. Download and STRM generation are not implemented yet.");
+            movie.Id, MediaStatus.Completed.ToString(), attemptsThisRun,
+            new SelectedMovieSource(approvedCandidate.Provider, approvedCandidate.Name), writeResult.Value, null);
+    }
+
+    /// <summary>
+    /// A candidate turned away by a check that runs before ffprobe (unsupported headers, identity):
+    /// still a SourceAttempt - Rejected, with a fixed safe reason - and still counted as attempted.
+    /// </summary>
+    private void RejectWithoutMediaValidation(Movie movie, StreamCandidate candidate, string reason, ref int attemptsThisRun)
+    {
+        RecordAttempt(movie.Id, candidate, SourceAttemptResult.Rejected, null, movie.Runtime, null, null, null, reason);
+        attemptsThisRun++;
+
+        LogCandidateAttempt(logger, movie.Id, candidate.Name, attemptsThisRun, SourceAttemptResult.Rejected);
     }
 
     private void RecordAttempt(
@@ -229,8 +302,8 @@ internal sealed partial class ProcessMovieCommandHandler(
     [LoggerMessage(Level = LogLevel.Debug, Message = "Movie {MovieId}: candidate '{CandidateName}' attempt #{AttemptNumber} -> {Result}")]
     private static partial void LogCandidateAttempt(ILogger logger, Guid movieId, string candidateName, int attemptNumber, SourceAttemptResult result);
 
-    [LoggerMessage(Level = LogLevel.Information, Message = "Movie {MovieId}: a candidate passed validation after {Attempts} attempt(s) - stopping before download")]
-    private static partial void LogValidCandidateFound(ILogger logger, Guid movieId, int attempts);
+    [LoggerMessage(Level = LogLevel.Information, Message = "Movie {MovieId} completed after {Attempts} attempt(s)")]
+    private static partial void LogMovieCompleted(ILogger logger, Guid movieId, int attempts);
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Movie {MovieId} marked Unavailable: {Reason}")]
     private static partial void LogMovieUnavailable(ILogger logger, Guid movieId, string reason);

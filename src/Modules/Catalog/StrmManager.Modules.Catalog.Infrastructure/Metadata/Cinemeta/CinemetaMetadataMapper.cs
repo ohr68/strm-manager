@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using StrmManager.Common.Domain.Abstractions;
 using StrmManager.Modules.Catalog.Application.Metadata;
@@ -68,11 +69,48 @@ internal static partial class CinemetaMetadataMapper
         DateTime? releaseAtUtc = TryParseUtc(meta.Released, out DateTime released) ? released : null;
 
         return new MovieMetadata(
-            new ExternalIds(meta.Id, null, null),
+            new ExternalIds(meta.Id, ReadTmdbId(meta.ExtensionData), null),
             meta.Name,
             year,
             ParseRuntimeMinutes(meta.Runtime),
             releaseAtUtc);
+    }
+
+    private const string TmdbIdProperty = "moviedb_id";
+    private const long MaxTmdbId = 9_999_999_999;
+
+    /// <summary>
+    /// Cinemeta's TMDB id ("moviedb_id") for a movie. Read from the DTO's extension data - it is
+    /// deliberately not a declared DTO property, so the unknown-media stub detection (which treats
+    /// any extra property as "not the stub") is unaffected. Optional and tolerant: a missing value,
+    /// or one that is not a positive integer (number or ASCII-digit string), is simply null - a bad
+    /// optional id must never stop a movie being added.
+    /// </summary>
+    private static string? ReadTmdbId(Dictionary<string, JsonElement>? extensionData)
+    {
+        if (extensionData is null || !extensionData.TryGetValue(TmdbIdProperty, out JsonElement value))
+        {
+            return null;
+        }
+
+        switch (value.ValueKind)
+        {
+            case JsonValueKind.Number:
+                return value.TryGetInt64(out long number) && number is > 0 and <= MaxTmdbId
+                    ? number.ToString(CultureInfo.InvariantCulture)
+                    : null;
+
+            case JsonValueKind.String:
+                string? text = value.GetString();
+                return text is { Length: >= 1 and <= 10 } &&
+                       text.All(character => character is >= '0' and <= '9') &&
+                       long.Parse(text, CultureInfo.InvariantCulture) > 0
+                    ? text
+                    : null;
+
+            default:
+                return null;
+        }
     }
 
     private static EpisodeMetadata? MapEpisode(CinemetaVideoDto video, TimeSpan? seriesRuntime)

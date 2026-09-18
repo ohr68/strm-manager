@@ -8,6 +8,7 @@ namespace StrmManager.Modules.MediaProcessing.Infrastructure.StrmGeneration;
 /// <summary>
 /// Writes Jellyfin-compatible .strm files under the configured root:
 /// {root}/tv/{Series Title} ({Year})/Season {NN}/{Series Title} - S{NN}E{NN}.strm
+/// {root}/movies/{Title} ({Year}) [imdbid-{ImdbId}]/{Title} ({Year}).strm
 /// See ADR-010 for the path-sanitization/traversal-protection and atomic-write reasoning.
 /// </summary>
 internal sealed partial class FileSystemStrmWriter(IOptions<StrmOptions> options, ILogger<FileSystemStrmWriter> logger)
@@ -36,6 +37,63 @@ internal sealed partial class FileSystemStrmWriter(IOptions<StrmOptions> options
             return Result.Failure<string>(StrmWriterErrors.PathEscapesRoot("computed path resolved outside the STRM root"));
         }
 
+        string? failureReason = await TryWriteAtomicallyAsync(candidatePath, sourceUrl, cancellationToken);
+
+        if (failureReason is not null)
+        {
+            LogWriteFailed(logger, reference.SeasonNumber, reference.EpisodeNumber, failureReason);
+            return Result.Failure<string>(StrmWriterErrors.WriteFailed(failureReason));
+        }
+
+        LogStrmWritten(logger, reference.SeasonNumber, reference.EpisodeNumber);
+
+        return candidatePath;
+    }
+
+    /// <summary>
+    /// Movie layout: {root}/movies/{Title} ({Year}) [imdbid-{ImdbId}]/{Title} ({Year}).strm - built
+    /// with the same sanitizer, the same root-containment check and the same atomic write as episodes.
+    /// </summary>
+    public async Task<Result<string>> WriteMovieAsync(
+        MovieStrmReference reference,
+        string sourceUrl,
+        CancellationToken cancellationToken = default)
+    {
+        string root = Path.GetFullPath(options.Value.RootPath);
+
+        string sanitizedTitle = SanitizePathComponent(reference.Title);
+        string sanitizedImdbId = SanitizePathComponent(reference.ImdbId);
+        string movieName = $"{sanitizedTitle} ({reference.Year})";
+        string folder = $"{movieName} [imdbid-{sanitizedImdbId}]";
+
+        string candidatePath = Path.GetFullPath(Path.Combine(root, "movies", folder, $"{movieName}.strm"));
+
+        if (!IsUnderRoot(candidatePath, root))
+        {
+            LogMoviePathEscapedRoot(logger, sanitizedImdbId);
+            return Result.Failure<string>(StrmWriterErrors.PathEscapesRoot("computed path resolved outside the STRM root"));
+        }
+
+        string? failureReason = await TryWriteAtomicallyAsync(candidatePath, sourceUrl, cancellationToken);
+
+        if (failureReason is not null)
+        {
+            LogMovieWriteFailed(logger, sanitizedImdbId, failureReason);
+            return Result.Failure<string>(StrmWriterErrors.WriteFailed(failureReason));
+        }
+
+        LogMovieStrmWritten(logger, sanitizedImdbId);
+
+        return candidatePath;
+    }
+
+    /// <summary>
+    /// Writes to a temp file next to the target and moves it into place, so a reader never sees a
+    /// half-written .strm. Returns null on success, or the IO failure's message (a path/permission
+    /// message - never the content, so never the source URL). Shared by episodes and movies.
+    /// </summary>
+    private static async Task<string?> TryWriteAtomicallyAsync(string candidatePath, string sourceUrl, CancellationToken cancellationToken)
+    {
         string directory = Path.GetDirectoryName(candidatePath)!;
 
         try
@@ -48,14 +106,11 @@ internal sealed partial class FileSystemStrmWriter(IOptions<StrmOptions> options
 
             File.Move(tempPath, candidatePath, overwrite: true);
 
-            LogStrmWritten(logger, reference.SeasonNumber, reference.EpisodeNumber);
-
-            return candidatePath;
+            return null;
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            LogWriteFailed(logger, reference.SeasonNumber, reference.EpisodeNumber, exception.Message);
-            return Result.Failure<string>(StrmWriterErrors.WriteFailed(exception.Message));
+            return exception.Message;
         }
     }
 
@@ -102,4 +157,13 @@ internal sealed partial class FileSystemStrmWriter(IOptions<StrmOptions> options
 
     [LoggerMessage(Level = LogLevel.Error, Message = "Computed .strm path for series '{SeriesTitle}' escaped the configured STRM root - refused to write")]
     private static partial void LogPathEscapedRoot(ILogger logger, string seriesTitle);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Wrote .strm file for movie {ImdbId}")]
+    private static partial void LogMovieStrmWritten(ILogger logger, string imdbId);
+
+    [LoggerMessage(Level = LogLevel.Error, Message = "Failed to write .strm file for movie {ImdbId}: {Reason}")]
+    private static partial void LogMovieWriteFailed(ILogger logger, string imdbId, string reason);
+
+    [LoggerMessage(Level = LogLevel.Error, Message = "Computed .strm path for movie {ImdbId} escaped the configured STRM root - refused to write")]
+    private static partial void LogMoviePathEscapedRoot(ILogger logger, string imdbId);
 }

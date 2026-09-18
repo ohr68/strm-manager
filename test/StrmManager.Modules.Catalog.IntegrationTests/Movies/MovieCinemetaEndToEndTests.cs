@@ -103,6 +103,46 @@ public class MovieCinemetaEndToEndTests(ApiWebApplicationFactory factory) : ICla
         Assert.Equal(new DateTime(1994, 10, 14, 0, 0, 0, DateTimeKind.Utc), movie.ReleaseAtUtc);
     }
 
+    [Fact]
+    public async Task PostMovie_CinemetaResponseWithMoviedbId_PersistsTheTmdbIdThroughTheExistingExternalIds()
+    {
+        // Phase 6.2d: Cinemeta's moviedb_id reaches Movie.ExternalIds.TmdbId with no schema change.
+        var requestedPaths = new List<string>();
+        HttpClient client = CreateClient(
+            """
+            {"meta":{"id":"tt0060910","imdb_id":"tt0060910","moviedb_id":8587,"type":"movie","name":"Movie With Tmdb",
+             "year":"1994","releaseInfo":"1994","released":"1994-06-24T00:00:00.000Z","runtime":"89 min","videos":[]}}
+            """,
+            requestedPaths);
+
+        HttpResponseMessage post = await client.PostAsJsonAsync("/api/movies", new { ImdbId = "tt0060910" });
+
+        Assert.Equal(HttpStatusCode.Created, post.StatusCode);
+        CreatedResponse? created = await post.Content.ReadFromJsonAsync<CreatedResponse>();
+        ExternalIdsBody? movie = await (await client.GetAsync($"/api/movies/{created!.Id}")).Content.ReadFromJsonAsync<ExternalIdsBody>();
+        Assert.Equal("tt0060910", movie!.ImdbId);
+        Assert.Equal("8587", movie.TmdbId);
+    }
+
+    [Fact]
+    public async Task PostMovie_CinemetaResponseWithoutMoviedbId_StillCreatesTheMovieWithANullTmdbId()
+    {
+        var requestedPaths = new List<string>();
+        HttpClient client = CreateClient(
+            """
+            {"meta":{"id":"tt0060911","imdb_id":"tt0060911","type":"movie","name":"Movie Without Tmdb",
+             "year":"1994","releaseInfo":"1994","released":"1994-06-24T00:00:00.000Z","runtime":"89 min","videos":[]}}
+            """,
+            requestedPaths);
+
+        HttpResponseMessage post = await client.PostAsJsonAsync("/api/movies", new { ImdbId = "tt0060911" });
+
+        Assert.Equal(HttpStatusCode.Created, post.StatusCode);
+        CreatedResponse? created = await post.Content.ReadFromJsonAsync<CreatedResponse>();
+        ExternalIdsBody? movie = await (await client.GetAsync($"/api/movies/{created!.Id}")).Content.ReadFromJsonAsync<ExternalIdsBody>();
+        Assert.Null(movie!.TmdbId);
+    }
+
     private sealed class StubCinemetaHandler(string body, List<string> requestedPaths) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -121,4 +161,6 @@ public class MovieCinemetaEndToEndTests(ApiWebApplicationFactory factory) : ICla
     private sealed record ProblemBody(string? Title, string? Detail);
 
     private sealed record MovieBody(string Title, int Year, string Status, DateTime ReleaseAtUtc);
+
+    private sealed record ExternalIdsBody(string? ImdbId, string? TmdbId);
 }

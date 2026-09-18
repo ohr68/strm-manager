@@ -30,11 +30,20 @@ internal static class ProcessMovieTestSupport
 
     public static readonly DateTime SeededAtUtc = Now.AddDays(-1);
 
+    private static int _imdbCounter = Random.Shared.Next(1_000_000, 8_000_000);
+
+    /// <summary>A well-formed, unique "tt" + 8 digits IMDb id (identity checks read real ttNNNNNNNN tokens).</summary>
+    public static string NextImdbId() => $"tt{Interlocked.Increment(ref _imdbCounter):D8}";
+
     public static async Task<Guid> SeedMovieAsync(
         IServiceProvider services,
         MediaStatus status,
         DateTime? nextAttemptAtUtc = null,
-        bool withoutImdbId = false)
+        bool withoutImdbId = false,
+        string title = "Process Movie Test",
+        int year = 2025,
+        string? imdbId = null,
+        string? tmdbId = null)
     {
         await using AsyncServiceScope scope = services.CreateAsyncScope();
         CatalogDbContext context = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
@@ -43,9 +52,9 @@ internal static class ProcessMovieTestSupport
         Movie movie = Movie.Schedule(
             withoutImdbId
                 ? new ExternalIds(null, $"tmdb{Guid.NewGuid():N}"[..12], null)
-                : new ExternalIds($"tt{Guid.NewGuid():N}"[..14], null, null),
-            "Process Movie Test",
-            2025,
+                : new ExternalIds(imdbId ?? NextImdbId(), tmdbId, null),
+            title,
+            year,
             TimeSpan.FromMinutes(100),
             releaseAtUtc,
             SeededAtUtc);
