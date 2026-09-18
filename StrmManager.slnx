@@ -23,5 +23,6 @@
     <Project Path="test/StrmManager.ArchitectureTests/StrmManager.ArchitectureTests.csproj" />
     <Project Path="test/StrmManager.Modules.Catalog.IntegrationTests/StrmManager.Modules.Catalog.IntegrationTests.csproj" />
     <Project Path="test/StrmManager.Modules.Catalog.UnitTests/StrmManager.Modules.Catalog.UnitTests.csproj" />
+    <Project Path="test/StrmManager.Modules.MediaProcessing.UnitTests/StrmManager.Modules.MediaProcessing.UnitTests.csproj" />
   </Folder>
 </Solution>
