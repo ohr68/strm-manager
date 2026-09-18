@@ -1,5 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
+using StrmManager.Modules.Catalog.Domain.Episodes;
+using StrmManager.Modules.Catalog.Domain.Movies;
 using StrmManager.Modules.Catalog.Domain.SourceAttempts;
 
 namespace StrmManager.Modules.Catalog.Infrastructure.SourceAttempts;
@@ -21,5 +23,19 @@ internal sealed class SourceAttemptConfiguration : IEntityTypeConfiguration<Sour
 
         builder.HasIndex(attempt => attempt.EpisodeId);
         builder.HasIndex(attempt => attempt.MovieId);
+
+        // EpisodeId/MovieId are optional (exactly one is set, enforced by the
+        // ForEpisode/ForMovie factories - see ADR-011) - Restrict, matching every other
+        // Catalog relationship (ADR-005): deletion semantics for a processed Episode's
+        // history haven't been designed yet.
+        builder.HasOne<Episode>()
+            .WithMany()
+            .HasForeignKey(attempt => attempt.EpisodeId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.HasOne<Movie>()
+            .WithMany()
+            .HasForeignKey(attempt => attempt.MovieId)
+            .OnDelete(DeleteBehavior.Restrict);
     }
 }
