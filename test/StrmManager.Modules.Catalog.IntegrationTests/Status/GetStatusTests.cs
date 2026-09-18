@@ -112,6 +112,8 @@ public class GetStatusTests : IDisposable
         var status = await response.Content.ReadFromJsonAsync<StatusResponse>();
         Assert.NotNull(status);
 
+        Assert.False(string.IsNullOrWhiteSpace(status.Build.Version));
+        Assert.Null(status.Build.Commit); // no Build__Commit env var is set in the test host
         Assert.False(status.Scheduler.Enabled); // ApiWebApplicationFactory sets Scheduling:Enabled=false
         Assert.Equal(2, status.Episodes.Scheduled);
         Assert.Equal(1, status.Episodes.Pending);
@@ -123,11 +125,27 @@ public class GetStatusTests : IDisposable
         Assert.Equal(1, status.Series.Active);
     }
 
+    [Fact]
+    public async Task GetStatus_WhenBuildCommitIsConfigured_ReturnsIt()
+    {
+        WebApplicationFactory<Program> isolatedFactory = _factory.WithWebHostBuilder(
+            builder => builder.UseSetting("Build:Commit", "abc1234"));
+
+        HttpResponseMessage response = await isolatedFactory.CreateClient().GetAsync("/api/status");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var status = await response.Content.ReadFromJsonAsync<StatusResponse>();
+        Assert.NotNull(status);
+        Assert.Equal("abc1234", status.Build.Commit);
+    }
+
     private static Episode CreateEpisode(Guid seasonId, int episodeNumber, DateTime releaseAtUtc) =>
         Episode.Schedule(
             seasonId, $"tt00000501:1:{episodeNumber}", $"Episode {episodeNumber}",
             seasonNumber: 1, episodeNumber: episodeNumber, runtime: TimeSpan.FromMinutes(52),
             releaseAtUtc: releaseAtUtc, utcNow: UtcNow);
+
+    private sealed record BuildInfoResponse(string Version, string? Commit);
 
     private sealed record SchedulerStatusResponse(bool Enabled);
 
@@ -136,5 +154,6 @@ public class GetStatusTests : IDisposable
 
     private sealed record SeriesStatusCounts(int Active, int MetadataRefreshDue);
 
-    private sealed record StatusResponse(SchedulerStatusResponse Scheduler, EpisodeStatusCounts Episodes, SeriesStatusCounts Series);
+    private sealed record StatusResponse(
+        BuildInfoResponse Build, SchedulerStatusResponse Scheduler, EpisodeStatusCounts Episodes, SeriesStatusCounts Series);
 }

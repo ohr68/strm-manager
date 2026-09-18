@@ -30,6 +30,13 @@ RUN dotnet publish src/Api/StrmManager.Api/StrmManager.Api.csproj \
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
 WORKDIR /app
 
+# Supplied explicitly via --build-arg from the LOCAL repository's `git rev-parse HEAD`
+# at build time - never inferred from anything inside this image (the build context
+# deliberately has no .git directory). Empty (not "unknown") when not supplied, so
+# BuildInfoOptions.Commit binds to null rather than a fake placeholder string.
+ARG GIT_COMMIT=
+ENV Build__Commit=$GIT_COMMIT
+
 # Debian's ffmpeg package bundles the ffprobe binary FfprobeMediaValidator
 # (MediaProcessing module) shells out to for media validation - installed before
 # switching to the non-root `app` user, and the apt lists are dropped afterward to

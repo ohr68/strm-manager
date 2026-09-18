@@ -1,3 +1,5 @@
+using System.Reflection;
+using Microsoft.Extensions.Options;
 using StrmManager.Common.Application.Messaging;
 using StrmManager.Common.Domain.Abstractions;
 using StrmManager.Modules.Catalog.Domain.Episodes;
@@ -15,6 +17,7 @@ internal sealed class GetOperationalStatusQueryHandler(
     IEpisodeRepository episodeRepository,
     ISeriesRepository seriesRepository,
     ISchedulerStatusProvider schedulerStatusProvider,
+    IOptions<BuildInfoOptions> buildInfoOptions,
     TimeProvider timeProvider)
     : IQueryHandler<GetOperationalStatusQuery, OperationalStatusResponse>
 {
@@ -27,6 +30,7 @@ internal sealed class GetOperationalStatusQueryHandler(
         int metadataRefreshDue = await seriesRepository.CountDueForMetadataRefreshAsync(utcNow, cancellationToken);
 
         var response = new OperationalStatusResponse(
+            new BuildInfoResponse(GetAssemblyVersion(), NormalizeCommit(buildInfoOptions.Value.Commit)),
             new SchedulerStatusResponse(schedulerStatusProvider.Enabled),
             new EpisodeStatusCounts(
                 episodeCounts.GetValueOrDefault(MediaStatus.Scheduled),
@@ -40,4 +44,17 @@ internal sealed class GetOperationalStatusQueryHandler(
 
         return response;
     }
+
+    // The SDK's own default informational version (no <Version> is set anywhere in this
+    // repo, so this is whatever .NET already produces on its own - "1.0.0" today). No
+    // versioning scheme was introduced for this.
+    private static string GetAssemblyVersion() =>
+        Assembly.GetEntryAssembly()?.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+        ?? "unknown";
+
+    // The Dockerfile sets Build__Commit="" when no --build-arg GIT_COMMIT is supplied
+    // (e.g. a local `docker build`) - an empty env var, not an absent one - so this
+    // normalizes that to a clean `null` rather than exposing "" through the API.
+    private static string? NormalizeCommit(string? commit) =>
+        string.IsNullOrWhiteSpace(commit) ? null : commit;
 }

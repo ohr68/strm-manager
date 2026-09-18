@@ -1,0 +1,24 @@
+services:
+  strm-manager-vnext:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: strm-manager-vnext:latest
+    container_name: strm-manager-vnext
+    restart: unless-stopped
+    ports:
+      - "8100:8080"
+    volumes:
+      - /srv/appdata/strm-manager-vnext:/app/data
+      - /srv/data/stream-vnext:/stream
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ConnectionStrings__Database: "Data Source=/app/data/strm-manager.db"
+      Strm__RootPath: /stream
+      Scheduling__Enabled: "false"
+      Scheduling__MaxConcurrentEpisodeProcessing: "1"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

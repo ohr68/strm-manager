@@ -78,6 +78,13 @@ public static class CatalogModule
             .ValidateDataAnnotations()
             .ValidateOnStart();
 
+        // No [Required]/[Range] attributes - Commit is legitimately null outside Docker
+        // (e.g. `dotnet run` in dev), not a misconfiguration. See BuildInfoOptions.
+        services.AddOptions<BuildInfoOptions>()
+            .Bind(configuration.GetSection(BuildInfoOptions.SectionName))
+            .ValidateDataAnnotations()
+            .ValidateOnStart();
+
         // Safe fallback if nothing else registers ISchedulerStatusProvider (e.g. a test
         // host that never adds the Scheduling module) - Scheduling.Infrastructure's own
         // registration is added after this one in Program.cs and wins for resolution.
