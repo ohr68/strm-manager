@@ -157,6 +157,44 @@ public sealed class Episode : Entity
         return Result.Success();
     }
 
+    /// <summary>
+    /// Applies a metadata correction (title/runtime always; ReleaseAtUtc only while
+    /// still Scheduled - once processing has started, the release timestamp is treated
+    /// as historical rather than something a provider refresh should keep rewriting).
+    /// Does not touch Status - callers should follow up with TryBecomeEligible if a
+    /// release date correction may have just made a Scheduled episode due.
+    /// </summary>
+    /// <returns>true if anything actually changed.</returns>
+    public bool UpdateMetadata(string title, TimeSpan? runtime, DateTime releaseAtUtc, DateTime utcNow)
+    {
+        bool changed = false;
+
+        if (Title != title)
+        {
+            Title = title;
+            changed = true;
+        }
+
+        if (Runtime != runtime)
+        {
+            Runtime = runtime;
+            changed = true;
+        }
+
+        if (Status == MediaStatus.Scheduled && ReleaseAtUtc != releaseAtUtc)
+        {
+            ReleaseAtUtc = releaseAtUtc;
+            changed = true;
+        }
+
+        if (changed)
+        {
+            UpdatedAtUtc = utcNow;
+        }
+
+        return changed;
+    }
+
     public Result Retry(DateTime utcNow)
     {
         if (Status is not (MediaStatus.Unavailable or MediaStatus.Error))

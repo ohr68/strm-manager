@@ -43,11 +43,12 @@ public sealed class Series : Entity
             UpdatedAtUtc = utcNow,
         };
 
-    public void UpdateMetadata(string title, string? originalTitle, int year, DateTime utcNow)
+    public void UpdateMetadata(string title, string? originalTitle, int year, SeriesStatus status, DateTime utcNow)
     {
         Title = title;
         OriginalTitle = originalTitle;
         Year = year;
+        Status = status;
         UpdatedAtUtc = utcNow;
     }
 }

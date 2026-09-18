@@ -6,5 +6,7 @@ public interface ISeasonRepository
 
     Task<Season?> GetBySeriesAndNumberAsync(Guid seriesId, int number, CancellationToken cancellationToken = default);
 
+    Task<IReadOnlyList<Season>> GetAllBySeriesAsync(Guid seriesId, CancellationToken cancellationToken = default);
+
     void Insert(Season season);
 }

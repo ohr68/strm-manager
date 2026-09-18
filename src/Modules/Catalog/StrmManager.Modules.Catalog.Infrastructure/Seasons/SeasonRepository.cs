@@ -14,5 +14,11 @@ internal sealed class SeasonRepository(CatalogDbContext context) : ISeasonReposi
             season => season.SeriesId == seriesId && season.Number == number,
             cancellationToken);
 
+    public async Task<IReadOnlyList<Season>> GetAllBySeriesAsync(Guid seriesId, CancellationToken cancellationToken = default) =>
+        await context.Seasons
+            .Where(season => season.SeriesId == seriesId)
+            .OrderBy(season => season.Number)
+            .ToListAsync(cancellationToken);
+
     public void Insert(Season season) => context.Seasons.Add(season);
 }

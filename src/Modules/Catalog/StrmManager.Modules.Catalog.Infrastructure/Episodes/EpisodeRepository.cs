@@ -15,6 +15,12 @@ internal sealed class EpisodeRepository(CatalogDbContext context) : IEpisodeRepo
             episode => episode.SeasonId == seasonId && episode.EpisodeNumber == episodeNumber,
             cancellationToken);
 
+    public async Task<IReadOnlyList<Episode>> GetBySeasonAsync(Guid seasonId, CancellationToken cancellationToken = default) =>
+        await context.Episodes
+            .Where(episode => episode.SeasonId == seasonId)
+            .OrderBy(episode => episode.EpisodeNumber)
+            .ToListAsync(cancellationToken);
+
     public async Task<IReadOnlyList<Episode>> GetScheduledDueAsync(DateTime utcNow, CancellationToken cancellationToken = default) =>
         await context.Episodes
             .Where(episode => episode.Status == MediaStatus.Scheduled && episode.ReleaseAtUtc <= utcNow)
