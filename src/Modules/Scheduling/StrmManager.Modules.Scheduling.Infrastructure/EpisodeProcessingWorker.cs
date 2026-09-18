@@ -27,6 +27,7 @@ internal sealed partial class EpisodeProcessingWorker(
     {
         if (!options.Value.Enabled)
         {
+            LogDisabled(logger);
             return;
         }
 
@@ -119,6 +120,9 @@ internal sealed partial class EpisodeProcessingWorker(
             return false;
         }
     }
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "EpisodeProcessingWorker disabled (Scheduling:Enabled=false)")]
+    private static partial void LogDisabled(ILogger logger);
 
     [LoggerMessage(Level = LogLevel.Information, Message = "EpisodeProcessingWorker started, ticking every {Interval}, max {MaxConcurrent} concurrent")]
     private static partial void LogStarted(ILogger logger, TimeSpan interval, int maxConcurrent);

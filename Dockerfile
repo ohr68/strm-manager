@@ -16,6 +16,7 @@ COPY src/Modules/Catalog/StrmManager.Modules.Catalog.Infrastructure/StrmManager.
 COPY src/Modules/Catalog/StrmManager.Modules.Catalog.Presentation/StrmManager.Modules.Catalog.Presentation.csproj src/Modules/Catalog/StrmManager.Modules.Catalog.Presentation/
 COPY src/Modules/MediaProcessing/StrmManager.Modules.MediaProcessing.Application/StrmManager.Modules.MediaProcessing.Application.csproj src/Modules/MediaProcessing/StrmManager.Modules.MediaProcessing.Application/
 COPY src/Modules/MediaProcessing/StrmManager.Modules.MediaProcessing.Infrastructure/StrmManager.Modules.MediaProcessing.Infrastructure.csproj src/Modules/MediaProcessing/StrmManager.Modules.MediaProcessing.Infrastructure/
+COPY src/Modules/Scheduling/StrmManager.Modules.Scheduling.Infrastructure/StrmManager.Modules.Scheduling.Infrastructure.csproj src/Modules/Scheduling/StrmManager.Modules.Scheduling.Infrastructure/
 
 RUN dotnet restore src/Api/StrmManager.Api/StrmManager.Api.csproj
 
