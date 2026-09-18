@@ -16,14 +16,17 @@ Dependencies always point inward. `test/StrmManager.ArchitectureTests` enforces 
 NetArchTest: Domain cannot depend on Application/Infrastructure/Presentation, Application
 cannot depend on Infrastructure/Presentation, Presentation cannot depend on Infrastructure.
 
-## Dependency diagram (current: Catalog only)
+## Dependency diagram (current: Catalog + MediaProcessing)
 
 ```
 StrmManager.Api
   |-- Catalog.Presentation --> Catalog.Application --> Catalog.Domain
   |-- Catalog.Infrastructure --> Catalog.Application, Catalog.Domain
+  |-- MediaProcessing.Infrastructure --> MediaProcessing.Application
   |-- Common.Presentation
 
+Catalog.Application --> MediaProcessing.Application, Catalog.Domain
+MediaProcessing.Application --> Catalog.Domain   (SourceAttemptResult only)
 Common.Presentation --> Common.Application --> Common.Domain
 ```
 
@@ -31,10 +34,15 @@ Common.Presentation --> Common.Application --> Common.Domain
 Cinemeta implementation inside `Catalog.Infrastructure/Metadata/Cinemeta/` - **not** a
 separate `Providers` project, despite ADR-004 originally sketching one. See
 [ADR-007](adr/ADR-007-metadata-provider-and-catalog-synchronization.md) for why the
-smaller structure was chosen once there was something real to build. `MediaProcessing`/
-`Scheduling` (not implemented yet) will depend on `Catalog.Domain` (they operate on
-`Episode`/`Movie`) and `Catalog.Application` (repositories, `IUnitOfWork`), but `Catalog`
-will never depend back on them.
+smaller structure was chosen once there was something real to build.
+
+`MediaProcessing` (Phase 3) similarly gets only two projects - `Application` and
+`Infrastructure`, no `Domain`/`Presentation` - and the processing *orchestrator*
+(`ProcessEpisodeCommandHandler`) lives in `Catalog.Application`, not in
+`MediaProcessing`, since it drives `Episode`'s state machine directly. See
+[ADR-008](adr/ADR-008-media-processing-module-boundary.md) for the full reasoning.
+`Scheduling` (still not implemented) will depend on `Catalog.Application` (to call
+`ProcessEpisodeCommandHandler`) the same way; `Catalog` will never depend back on it.
 
 There is no `Common.Infrastructure` project. It existed in the initial foundation as an
 empty shell (mirroring Evently's `Evently.Common.Infrastructure`, which holds shared
@@ -150,26 +158,39 @@ Driven by `POST /api/series` (first sync, inline, best-effort) and
 place. Full reasoning, including why this isn't a separate `Providers` module, in
 [ADR-007](adr/ADR-007-metadata-provider-and-catalog-synchronization.md).
 
-## Processing pipeline (planned - MediaProcessing/Scheduling)
+## Processing pipeline (implemented, Phase 3 - explicit trigger only, no scheduler)
 
 ```
-Scheduler tick
-  -> IEpisodeRepository.GetScheduledDueAsync / GetRetryableAsync
-  -> Episode.StartSearching()
-  -> IStreamProvider.GetStreamsAsync(episode)          [not implemented yet]
-  -> for each StreamCandidate (in preference order):
-       Episode.StartValidating()
-       IMediaValidator.ValidateAsync(candidate, reference)   [MediaProcessing, ffprobe]
-       -> approved?  IStrmWriter.WriteEpisodeAsync(...) -> Episode.MarkCompleted()
-       -> rejected?  record SourceAttempt, try next candidate
+POST /api/episodes/{id}/process
+  -> already Completed?  return idempotently, no side effects
+  -> Episode.StartSearching()                          [in-memory only, no save yet]
+  -> IStreamProvider.GetEpisodeStreamsAsync(reference)  [FrostStreamProvider]
+       failure -> MarkError   |   empty -> MarkUnavailable
+  -> Episode.StartValidating()                          [in-memory only, no save yet]
+  -> for each StreamCandidate (provider's order):
+       EpisodeIdentityValidator.Evaluate(candidateText, season, episode)  [per candidate]
+       not Compatible -> record SourceAttempt(Rejected), try next candidate
+       Compatible -> IMediaValidator.ValidateAsync(candidate, reference)  [FfprobeMediaValidator]
+                     -> record SourceAttempt(result), approved? break : try next candidate
   -> no candidate approved -> Episode.MarkUnavailable(nextAttemptAtUtc: retry policy)
-  -> technical failure at any step -> Episode.MarkError(reason)
+  -> approved -> IStrmWriter.WriteEpisodeAsync(...) -> insert/overwrite StrmFile -> Episode.MarkCompleted()
+  -> IUnitOfWork.SaveChangesAsync()   (single call, at whichever terminal outcome is reached)
 ```
 
-Each step's `SourceAttempt` is persisted (without the full source URL, only what's needed
-to answer "why wasn't this created" - see the domain model's `SourceAttempt.FailureReason`,
-`DifferencePercentage`, etc.), independently of whether the overall episode ends up
-`Completed` or `Unavailable`.
+Each candidate's `SourceAttempt` is persisted (without the full source URL, only what's
+needed to answer "why wasn't this created" - see the domain model's
+`SourceAttempt.FailureReason`, `DifferencePercentage`, etc.), independently of whether
+the overall episode ends up `Completed` or `Unavailable`. `Searching`/`Validating` are
+never committed on their own - see [ADR-011](adr/ADR-011-processing-restart-semantics.md)
+for why a crash mid-pipeline needs no separate recovery mechanism. Full module-boundary
+reasoning in [ADR-008](adr/ADR-008-media-processing-module-boundary.md), ffprobe
+process-safety and duration-tolerance rules in
+[ADR-009](adr/ADR-009-ffprobe-process-safety.md), `.strm` path/sanitization/atomicity
+rules in [ADR-010](adr/ADR-010-strm-filesystem-safety.md).
+
+There is still no `Scheduling` module - processing only happens when
+`POST /api/episodes/{id}/process` is called explicitly (manually, or by a future
+scheduler). `Movie` processing is not implemented (no `WriteMovieAsync` yet).
 
 ## Persistence
 
@@ -181,7 +202,10 @@ SQLite has no schema concept - so table names are simply prefixed by convention
 
 Migrations so far: `InitialCreate` (Phase 1), `AddCatalogForeignKeys` (Phase 1.1, see
 [ADR-005](adr/ADR-005-catalog-relational-integrity.md)), `AddEpisodeExternalIdUniqueIndex`
-(Phase 2, see [ADR-007](adr/ADR-007-metadata-provider-and-catalog-synchronization.md)).
+(Phase 2, see [ADR-007](adr/ADR-007-metadata-provider-and-catalog-synchronization.md)),
+`AddSourceAttemptAndStrmFileForeignKeys` (Phase 3 - `SourceAttempt`/`StrmFile` now have
+FK constraints against `Episode`/`Movie`, `DeleteBehavior.Restrict`, consistent with
+ADR-005's convention).
 
 ## Incremental plan
 
@@ -190,11 +214,12 @@ Migrations so far: `InitialCreate` (Phase 1), `AddCatalogForeignKeys` (Phase 1.1
    scope decision, cleanup~~
 3. ~~Metadata: `IMetadataProvider`/`CinemetaMetadataProvider`, catalog synchronization
    (`Series`/`Season`/`Episode` from an IMDb id), with fixture-based tests (no live HTTP
-   calls in CI)~~ (Phase 2 - this delivery)
-4. `MediaProcessing`: `IStreamProvider`/`FrostStreamProvider`,
-   `IMediaValidator`/`FfprobeMediaValidator` (wrapping the validation rules already
-   proven in the Python backend - duration tolerance, codec checks), `ISourceSelector`,
-   `IStrmWriter` (atomic temp-file-then-rename writes, Jellyfin-compatible paths).
+   calls in CI)~~ (Phase 2)
+4. ~~`MediaProcessing`: `IStreamProvider`/`FrostStreamProvider`,
+   `IMediaValidator`/`FfprobeMediaValidator` (duration tolerance, codec checks, matching
+   the Python backend's validated rules), `IStrmWriter` (atomic temp-file-then-rename
+   writes, Jellyfin-compatible paths), driven explicitly via
+   `POST /api/episodes/{id}/process` - no scheduler yet~~ (Phase 3 - this delivery)
 5. `Scheduling` module: `BackgroundService`s for `ReleaseProcessing` (Scheduled -> Pending)
    and `RetryProcessing` (Unavailable/Error -> Pending), bounded concurrency
    (`MaxConcurrentEpisodeProcessing`) - see [ADR-003](adr/ADR-003-background-service-scheduler.md)

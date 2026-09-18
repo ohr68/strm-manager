@@ -16,9 +16,12 @@ Phase 1 (foundation) and Phase 1.1 (hardening) are done: solution structure, the
 persistence with referential integrity, global exception handling, and the test/Docker
 scaffolding. Phase 2 added metadata: given an IMDb series id, STRM Manager retrieves
 metadata from Cinemeta and persists/refreshes its Series/Season/Episode graph
-idempotently. Stream discovery (FrostStream), media validation (`ffprobe`), STRM
-generation and the scheduler are **not implemented yet** - see
-[docs/architecture.md](docs/architecture.md) for the full plan.
+idempotently. Phase 3 added the media processing pipeline: `POST /api/episodes/{id}/process`
+finds candidate streams (FrostStream), validates each with `ffprobe` (duration tolerance,
+codec checks), and writes the first approved candidate to a Jellyfin-compatible `.strm`
+file. Processing is explicit/on-demand only - there is still no scheduler, so nothing
+runs automatically yet; see [docs/architecture.md](docs/architecture.md) for the full
+plan.
 
 ## Architecture
 
@@ -36,10 +39,10 @@ other through public interfaces registered in DI, never through internal types.
                             |
         +-------------------+
         |                   |
-     Catalog            MediaProcessing (planned)
- (Series/Season/     (Stream discovery/Validation/
-  Episode/Movie,          StrmGeneration)
-  + metadata sync)
+     Catalog             MediaProcessing
+ (Series/Season/     (FrostStream discovery/
+  Episode/Movie,       ffprobe validation/
+  + metadata sync)        .strm writing)
 ```
 
 See [docs/architecture.md](docs/architecture.md) for the dependency diagram, the Episode
@@ -53,12 +56,14 @@ There is no separate `Providers` module - metadata retrieval turned out to be sm
 enough to live inside `Catalog` (`Catalog.Application/Metadata/`,
 `Catalog.Infrastructure/Metadata/Cinemeta/`). See
 [ADR-007](docs/adr/ADR-007-metadata-provider-and-catalog-synchronization.md).
+`MediaProcessing` similarly gets only `Application`/`Infrastructure` projects (no
+`Domain`/`Presentation`) - see [ADR-008](docs/adr/ADR-008-media-processing-module-boundary.md).
 
 | Module | Status | Responsibility |
 |---|---|---|
-| `Catalog` | Implemented | Series, Season, Episode, Movie, SourceAttempt, StrmFile, plus metadata retrieval (`IMetadataProvider`/Cinemeta) and synchronization (`CatalogSynchronizer`). |
-| `MediaProcessing` | Planned | `IStreamProvider` (FrostStream), `IMediaValidator` (ffprobe), source selection, `.strm` writing. |
-| `Scheduling` | Planned | `BackgroundService`s for release processing and retries. |
+| `Catalog` | Implemented | Series, Season, Episode, Movie, SourceAttempt, StrmFile, plus metadata retrieval (`IMetadataProvider`/Cinemeta), synchronization (`CatalogSynchronizer`), and the `ProcessEpisode` orchestrator. |
+| `MediaProcessing` | Implemented (episodes only) | `IStreamProvider` (FrostStream), `IMediaValidator` (ffprobe), `IStrmWriter` (`.strm` writing). No movie support yet. |
+| `Scheduling` | Planned | `BackgroundService`s for release processing and retries - processing today is explicit/on-demand only. |
 
 ## Stack
 
@@ -105,6 +110,10 @@ curl http://localhost:5221/api/seasons/{seasonId}/episodes
 
 # Re-sync later (idempotent - safe to call repeatedly):
 curl -X POST http://localhost:5221/api/series/{id}/refresh
+
+# Process one episode once it's Pending (finds a stream, validates it with ffprobe,
+# writes a .strm file):
+curl -X POST http://localhost:5221/api/episodes/{episodeId}/process
 ```
 
 ## Configuration
@@ -141,6 +150,42 @@ if needed. HTTP resilience (timeout + a couple of retries on transient failures 
 never on 404) is configured once in `CatalogModule` - see
 [ADR-007](docs/adr/ADR-007-metadata-provider-and-catalog-synchronization.md).
 
+Stream provider (FrostStream) and media validation (ffprobe), both validated at startup:
+
+```json
+{
+  "StreamProviders": {
+    "FrostStream": {
+      "BaseUrl": "https://froststream.cloutteam.com/",
+      "TimeoutSeconds": 15
+    }
+  },
+  "MediaValidation": {
+    "Ffprobe": {
+      "ExecutablePath": "ffprobe",
+      "TimeoutSeconds": 30,
+      "EpisodeRuntimeTolerancePercentage": 35,
+      "MinimumEpisodeDurationSeconds": 1200
+    }
+  },
+  "Strm": {
+    "RootPath": "/stream"
+  }
+}
+```
+
+`ExecutablePath` relies on `ffprobe` being on `PATH` (installed in the Docker image - see
+Docker below); override with an absolute path if needed.
+`EpisodeRuntimeTolerancePercentage`/`MinimumEpisodeDurationSeconds` are the two duration
+rules ffprobe validation applies - never both at once, see
+[ADR-009](docs/adr/ADR-009-ffprobe-process-safety.md). `Strm:RootPath` is where `.strm`
+files are written (mounted as the `/stream` Docker volume in production); see
+[ADR-010](docs/adr/ADR-010-strm-filesystem-safety.md) for the path/sanitization rules.
+
+`Processing:UnavailableRetryDelay` (default `06:00:00`) controls how far in the future
+`NextAttemptAtUtc` is set when an episode is marked `Unavailable` - informational only in
+this phase, since nothing yet reads it automatically (no scheduler).
+
 ## Database & migrations
 
 SQLite, managed through EF Core migrations (no `EnsureCreated`). To add a new migration
@@ -168,11 +213,19 @@ dotnet test
 - `test/StrmManager.Modules.Catalog.UnitTests` - Episode lifecycle/state machine, Cinemeta
   mapping (fixture-based, see `Metadata/Fixtures/`), `CinemetaMetadataProvider` HTTP/error
   handling (fake `HttpMessageHandler`, no live Cinemeta).
+- `test/StrmManager.Modules.MediaProcessing.UnitTests` - episode-identity matching,
+  `FrostStreamProvider` HTTP/error handling (fake `HttpMessageHandler`, no live
+  FrostStream), ffprobe JSON-parsing rules as a pure function (no process involved -
+  includes the legacy-validated duration/tolerance examples), ffprobe process-invocation
+  failure paths (missing executable, rejected URL schemes - runnable with no ffprobe
+  installed at all), and `FileSystemStrmWriter` path/sanitization/atomicity behavior.
 - `test/StrmManager.Modules.Catalog.IntegrationTests` - API + SQLite, via `WebApplicationFactory`,
-  including the full add/refresh/discover-new-episode flow against a `FakeMetadataProvider`
-  (`ApiWebApplicationFactory` registers it by default for every test in this project - no
-  test ever hits live Cinemeta).
-- `test/StrmManager.ArchitectureTests` - layering rules (Domain -> Application -> Infrastructure/Presentation), enforced with NetArchTest.
+  including the full add/refresh/discover-new-episode flow against a `FakeMetadataProvider`,
+  and the full `POST /api/episodes/{id}/process` flow against
+  `FakeStreamProvider`/`FakeMediaValidator` and a temp `.strm` root
+  (`ApiWebApplicationFactory` registers all three fakes by default for every test in this
+  project - no test ever hits live Cinemeta/FrostStream or spawns a real ffprobe process).
+- `test/StrmManager.ArchitectureTests` - layering rules (Domain -> Application -> Infrastructure/Presentation) and module boundaries (`Catalog` <-> `MediaProcessing`), enforced with NetArchTest.
 
 ## Docker
 
@@ -184,8 +237,9 @@ docker run -p 8080:8080 \
   strm-manager
 ```
 
-`ffprobe`/`ffmpeg` are not installed in the image yet - they will be added once the
-`MediaProcessing` module (media validation) lands.
+Debian's `ffmpeg` package (which bundles `ffprobe`) is installed in the runtime image.
+`/stream` is where `.strm` files are written - mount it to wherever Jellyfin's library
+scan point is.
 
 ## Main endpoints (current)
 
@@ -197,9 +251,12 @@ docker run -p 8080:8080 \
 | POST | `/api/series/{id}/refresh` | Re-syncs a series against the metadata provider; idempotent, preserves `Completed`/`Unavailable` episode state. |
 | GET | `/api/series/{id}/seasons` | Lists a series' seasons. |
 | GET | `/api/seasons/{id}/episodes` | Lists a season's episodes. |
+| POST | `/api/episodes/{id}/process` | Runs the processing pipeline for one episode (find streams, validate, write `.strm`); idempotent if already `Completed`; 409 Conflict if not yet eligible (e.g. still `Scheduled`). |
 
 `GET /api/series/{id}` intentionally does not return the full season/episode graph by
-default (it can get large) - use the dedicated seasons/episodes endpoints.
+default (it can get large) - use the dedicated seasons/episodes endpoints. Response
+bodies never include the underlying stream URL - only the selected source's provider
+name and the resulting `.strm` path.
 
 More endpoints (movies, retry, status) will be added as the corresponding use cases and
 modules are implemented - see [docs/architecture.md](docs/architecture.md#incremental-plan).
