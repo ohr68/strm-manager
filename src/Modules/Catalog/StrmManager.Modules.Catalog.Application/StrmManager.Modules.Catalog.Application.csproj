@@ -3,10 +3,12 @@
   <ItemGroup>
     <ProjectReference Include="..\StrmManager.Modules.Catalog.Domain\StrmManager.Modules.Catalog.Domain.csproj" />
     <ProjectReference Include="..\..\..\Common\StrmManager.Common.Application\StrmManager.Common.Application.csproj" />
+    <ProjectReference Include="..\..\MediaProcessing\StrmManager.Modules.MediaProcessing.Application\StrmManager.Modules.MediaProcessing.Application.csproj" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Options" Version="10.0.0" />
   </ItemGroup>
 
   <PropertyGroup>

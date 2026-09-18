@@ -5,6 +5,7 @@
     <ProjectReference Include="..\..\Modules\Catalog\StrmManager.Modules.Catalog.Infrastructure\StrmManager.Modules.Catalog.Infrastructure.csproj" />
     <ProjectReference Include="..\..\Modules\Catalog\StrmManager.Modules.Catalog.Application\StrmManager.Modules.Catalog.Application.csproj" />
     <ProjectReference Include="..\..\Common\StrmManager.Common.Presentation\StrmManager.Common.Presentation.csproj" />
+    <ProjectReference Include="..\..\Modules\MediaProcessing\StrmManager.Modules.MediaProcessing.Infrastructure\StrmManager.Modules.MediaProcessing.Infrastructure.csproj" />
   </ItemGroup>
 
   <ItemGroup>

@@ -9,6 +9,7 @@ using Polly;
 using StrmManager.Common.Application.Messaging;
 using StrmManager.Modules.Catalog.Application.Abstractions.Data;
 using StrmManager.Modules.Catalog.Application.Metadata;
+using StrmManager.Modules.Catalog.Application.Processing;
 using StrmManager.Modules.Catalog.Application.Series.AddSeries;
 using StrmManager.Modules.Catalog.Domain.Episodes;
 using StrmManager.Modules.Catalog.Domain.Movies;
@@ -59,6 +60,11 @@ public static class CatalogModule
         services.AddValidatorsFromAssembly(typeof(AddSeriesCommand).Assembly, includeInternalTypes: true);
 
         services.AddCinemetaMetadataProvider(configuration);
+
+        services.AddOptions<ProcessingOptions>()
+            .Bind(configuration.GetSection(ProcessingOptions.SectionName))
+            .ValidateDataAnnotations()
+            .ValidateOnStart();
 
         return services;
     }

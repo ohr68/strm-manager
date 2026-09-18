@@ -1,20 +1,26 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 using StrmManager.Api.Middleware;
 using StrmManager.Common.Presentation.Endpoints;
 using StrmManager.Modules.Catalog.Infrastructure;
 using StrmManager.Modules.Catalog.Infrastructure.Database;
 using StrmManager.Modules.Catalog.Presentation;
+using StrmManager.Modules.MediaProcessing.Infrastructure;
+using StrmManager.Modules.MediaProcessing.Infrastructure.Validation.Ffprobe;
 
 WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddSingleton(TimeProvider.System);
 
 builder.Services.AddCatalogModule(builder.Configuration);
+builder.Services.AddMediaProcessingModule(builder.Configuration);
 builder.Services.AddEndpoints(AssemblyReference.Assembly);
 
 builder.Services
     .AddHealthChecks()
-    .AddDbContextCheck<CatalogDbContext>("catalog-database");
+    .AddDbContextCheck<CatalogDbContext>("catalog-database")
+    // Degraded, not Unhealthy, when ffprobe is missing - see FfprobeHealthCheck.
+    .AddCheck<FfprobeHealthCheck>("ffprobe", failureStatus: HealthStatus.Degraded);
 
 builder.Services.AddOpenApi();
 
