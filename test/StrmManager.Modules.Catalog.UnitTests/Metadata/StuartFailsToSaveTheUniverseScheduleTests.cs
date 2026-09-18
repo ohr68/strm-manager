@@ -25,7 +25,7 @@ public class StuartFailsToSaveTheUniverseScheduleTests
     {
         string path = Path.Combine(AppContext.BaseDirectory, "Metadata", "Fixtures", "stuart-continuing.json");
         string json = File.ReadAllText(path);
-        CinemetaSeriesResponseDto? response = JsonSerializer.Deserialize<CinemetaSeriesResponseDto>(json, SerializerOptions);
+        CinemetaMetaResponseDto? response = JsonSerializer.Deserialize<CinemetaMetaResponseDto>(json, SerializerOptions);
 
         Result<SeriesMetadata> result = CinemetaMetadataMapper.Map(response!.Meta!);
         Assert.True(result.IsSuccess);

@@ -14,6 +14,11 @@ public static class MetadataProviderErrors
             "Metadata.SeriesNotFound",
             $"{provider} has no metadata for external id '{externalId}'.");
 
+    public static Error MovieNotFound(string provider, string externalId) =>
+        Error.NotFound(
+            "Metadata.MovieNotFound",
+            $"{provider} has no metadata for external id '{externalId}'.");
+
     public static Error ProviderUnavailable(string provider) =>
         Error.Failure("Metadata.ProviderUnavailable", $"{provider} is currently unavailable.");
 

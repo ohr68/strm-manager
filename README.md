@@ -26,6 +26,12 @@ promote released episodes, discover and process `Pending` episodes, retry due
 periodically refresh Series metadata to discover newly announced episodes. See
 [docs/architecture.md](docs/architecture.md) for the full plan.
 
+Movie catalog support exists (Phase 6.1): a movie can be added by a known IMDb id
+(metadata comes from Cinemeta) and queried. Movie **processing** (stream lookup,
+validation, `.strm` generation), autonomous movie scheduling/processing, and external-id
+discovery (finding a movie by title) are **not implemented yet** - a movie is only
+catalogued today.
+
 ## Architecture
 
 STRM Manager is a **modular monolith**. Each module is a vertical slice with its own
@@ -68,7 +74,7 @@ use cases, never a place for new business logic. See
 
 | Module | Status | Responsibility |
 |---|---|---|
-| `Catalog` | Implemented | Series, Season, Episode, Movie, SourceAttempt, StrmFile, plus metadata retrieval (`IMetadataProvider`/Cinemeta), synchronization (`CatalogSynchronizer`), the `ProcessEpisode` orchestrator, and `RunCatalogMaintenanceCommand`. |
+| `Catalog` | Implemented (movies: catalog only) | Series, Season, Episode, Movie, SourceAttempt, StrmFile, plus metadata retrieval for series and movies (`IMetadataProvider`/Cinemeta), series synchronization (`CatalogSynchronizer`), add/query of movies by IMDb id, the `ProcessEpisode` orchestrator, and `RunCatalogMaintenanceCommand`. |
 | `MediaProcessing` | Implemented (episodes only) | `IStreamProvider` (FrostStream), `IMediaValidator` (ffprobe), `IStrmWriter` (`.strm` writing). No movie support yet. |
 | `Scheduling` | Implemented | `CatalogMaintenanceWorker` (release/retry/stale-recovery/metadata-refresh) and `EpisodeProcessingWorker` (bounded-concurrency processing) - both `BackgroundService`s calling existing `Catalog.Application` use cases. |
 
@@ -133,6 +139,12 @@ curl http://localhost:5221/api/status
 
 # List episodes by status, paginated:
 curl "http://localhost:5221/api/episodes?status=Unavailable&page=1&pageSize=50"
+
+# Add a movie by known IMDb id (catalog only - movie processing is not implemented yet):
+curl -X POST http://localhost:5221/api/movies \
+  -H "Content-Type: application/json" \
+  -d '{"imdbId":"tt0111161"}'
+curl http://localhost:5221/api/movies/{id}
 ```
 
 ## Configuration
@@ -322,13 +334,16 @@ scan point is.
 | POST | `/api/episodes/{id}/retry` | Returns an `Unavailable`/`Error` episode to `Pending`; does not reprocess synchronously - the next processing pass (manual or worker) picks it up. |
 | GET | `/api/episodes?status=&page=&pageSize=` | Lists episodes, optionally filtered by status, paginated. |
 | GET | `/api/status` | Operational overview: episode status counts, series active/metadata-refresh-due counts, whether the scheduler is enabled. Never includes stream URLs. |
+| POST | `/api/movies` | Adds a movie by known IMDb id (`{"imdbId":"tt0111161"}`); title/year/runtime/release date come from the metadata provider. 201 with `{ "id" }`; 400 for an invalid id or when the provider has no reliable release date; 404 if the provider does not know the id; 409 if the movie already exists. |
+| GET | `/api/movies/{id}` | Returns a movie (ids, title, year, runtime, release date, status). |
 
 `GET /api/series/{id}` intentionally does not return the full season/episode graph by
 default (it can get large) - use the dedicated seasons/episodes endpoints. Response
 bodies never include the underlying stream URL - only the selected source's provider
 name and the resulting `.strm` path.
 
-Movie endpoints will be added once movie processing is implemented - see
+Movies can be added and queried, but there are no movie processing/retry endpoints yet
+(and nothing processes a movie automatically) - see
 [docs/architecture.md](docs/architecture.md#incremental-plan).
 
 ## Related projects

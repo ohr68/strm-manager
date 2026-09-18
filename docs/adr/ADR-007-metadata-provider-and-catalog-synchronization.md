@@ -200,3 +200,52 @@ low-concurrency single-user tool; revisit if it proves to be a real problem in p
   concurrent-refresh conflicts surface as raw exceptions rather than a mapped `Result`;
   `Series.ExternalIds.Tmdb`/`Tvdb` are never populated from Cinemeta metadata (Cinemeta
   doesn't reliably provide them in the base response - out of scope for this phase).
+
+## Addendum (Phase 6.1): movie metadata
+
+Adds only what belongs to this ADR's scope - the provider-neutral metadata boundary and
+its Cinemeta implementation. Decisions 1-11 above are unchanged (including Decision 5,
+Season 0).
+
+- **Movies use the same boundary.** `IMetadataProvider` gained `GetMovieAsync(externalId)`
+  returning a provider-neutral `MovieMetadata` (external ids, title, year, runtime,
+  release timestamp). Lookup is by a known stable id only; external-id discovery/search by
+  title is explicitly outside this decision and not implemented.
+- **Provider DTOs stay in Infrastructure.** `CinemetaMetadataProvider` serves
+  `meta/series/{id}.json` and `meta/movie/{id}.json` through one shared HTTP/error path
+  (same `HttpClient`, resilience pipeline, timeouts and error taxonomy as Decision 3);
+  the Cinemeta envelope DTO is shared and never crosses into Application/Domain.
+- **The release date is nullable at the boundary and never invented.**
+  `MovieMetadata.ReleaseAtUtc` is `null` when Cinemeta has no usable date (Cinemeta does
+  return `"released": null` for some real movies), mirroring Decision 4 for episodes.
+- **`AddMovie` requires a reliable release date.** `Movie.Schedule` needs a release
+  timestamp to decide Scheduled vs Pending, so metadata without one is rejected
+  (`Movies.ReleaseDateUnavailable`, a validation error) instead of being scheduled with a
+  fabricated date. Unlike `AddSeries` there is no best-effort fallback: a movie has nothing
+  to be created from without metadata, so provider failures are returned to the caller.
+  Title and year always come from the provider - the command carries only the IMDb id.
+- **Duplicates are rejected, not idempotent.** Adding a movie whose canonical IMDb id
+  already exists is a Conflict (`Movies.AlreadyExists`) - checked for the requested id
+  (before any provider call) and again for the provider's canonical id when it differs.
+  This deliberately differs from `AddSeries`, which returns the existing id.
+- **Cinemeta's HTTP-200 "unknown id" responses are interpreted per media type, and
+  conservatively.** Cinemeta answers 200 (not 404) for ids it does not know, and there is
+  no single stub format: the representation differs by media type, and each is recognized
+  only by the shape actually observed live for *that* type.
+  - *Series:* an unknown id answers an empty top-level object `{}` -> `SeriesNotFound`.
+  - *Movie:* an unknown id answers a meta object with exactly `id`, `type` (`"movie"`) and
+    `behaviorHints` -> `MovieNotFound`.
+
+  A shape observed for one type is deliberately **not** assumed for the other: a
+  movie-style stub returned for a series lookup, or `{}` returned for a movie lookup, is an
+  unrecognized response and stays `InvalidResponse`, as does anything else lacking usable
+  data (a real media object missing its name, `{"meta":null}`, extra unrecognized fields,
+  ...). Unrecognized variations fail safe as `InvalidResponse` rather than being guessed
+  into `NotFound`; if Cinemeta is later observed to use another representation, it is added
+  explicitly per type. The recognition lives in one Infrastructure class
+  (`CinemetaUnknownMedia`); the mapper stays strict and knows nothing about not-found
+  semantics. An HTTP 404 from Cinemeta remains `SeriesNotFound`/`MovieNotFound` as in
+  Decision 3. This supersedes the earlier behavior where an unknown series id surfaced as
+  `InvalidResponse` (HTTP 500).
+- **`CatalogSynchronizer` stays series-specific.** It exists to reconcile seasons and
+  episodes; a movie has no such structure, so nothing was generalized.

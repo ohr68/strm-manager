@@ -14,6 +14,12 @@ public sealed class FakeMetadataProvider : IMetadataProvider
     public Func<string, Result<SeriesMetadata>> Handler { get; set; } =
         externalId => Result.Failure<SeriesMetadata>(MetadataProviderErrors.SeriesNotFound("Fake", externalId));
 
+    public Func<string, Result<MovieMetadata>> MovieHandler { get; set; } =
+        externalId => Result.Failure<MovieMetadata>(MetadataProviderErrors.MovieNotFound("Fake", externalId));
+
     public Task<Result<SeriesMetadata>> GetSeriesAsync(string externalId, CancellationToken cancellationToken = default) =>
         Task.FromResult(Handler(externalId));
+
+    public Task<Result<MovieMetadata>> GetMovieAsync(string externalId, CancellationToken cancellationToken = default) =>
+        Task.FromResult(MovieHandler(externalId));
 }

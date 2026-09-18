@@ -210,6 +210,31 @@ claim/recovery/retry semantics in [ADR-013](adr/ADR-013-claim-and-recovery-seman
 
 `Movie` processing is still not implemented (no `WriteMovieAsync` yet).
 
+## Movie catalog (implemented, Phase 6.1 - catalog only)
+
+```
+POST /api/movies  { "imdbId": "tt..." }
+  -> validate id format                                    (400)
+  -> IMDb id already in the catalog?                       (409, before any provider call)
+  -> IMetadataProvider.GetMovieAsync(imdbId)               [CinemetaMetadataProvider]
+       provider does not know the id                       (404)
+  -> MovieMetadata (provider-neutral; ReleaseAtUtc may be null)
+  -> provider's canonical IMDb id already in the catalog?  (409)
+  -> no reliable release date?                             (400 - never invented)
+  -> Movie.Schedule(...)   -> Scheduled (future release) or Pending (already released)
+  -> IUnitOfWork.SaveChangesAsync()
+
+GET /api/movies/{id}
+```
+
+A movie is only *catalogued* today: nothing processes it (no stream lookup, `ffprobe`
+validation or `.strm` generation), no scheduler or worker touches movies, and there is no
+external-id discovery - adding a movie requires a known IMDb id. `CatalogSynchronizer` stays
+series-specific (movies have no seasons/episodes to reconcile), and `Movie`'s lifecycle
+methods are still the earlier copy of `Episode`'s, without the claim/recovery/retryable-error
+behavior `Episode` gained in Phase 4. Decisions in the
+[ADR-007 addendum](adr/ADR-007-metadata-provider-and-catalog-synchronization.md#addendum-phase-61-movie-metadata).
+
 ## Autonomous scheduling (implemented, Phase 4)
 
 ```
@@ -282,7 +307,9 @@ busy-timeout were also enabled in Phase 4 - see
    double-process the same episode; `GET /api/status`,
    `GET /api/episodes?status=`, `POST /api/episodes/{id}/retry`~~ (Phase 4 - this
    delivery)
-6. Movie use cases mirroring the Episode metadata-sync and processing pipeline.
+6. Movie use cases mirroring the Episode pipeline. Done so far (Phase 6.1): catalog only -
+   add/query a movie by known IMDb id. Still to do: movie processing, autonomous movie
+   scheduling/recovery, external-id discovery.
 7. A Jellyfin plugin / web UI, once there's something worth pointing them at.
 8. Only after the above has test coverage equivalent to the current Python backend:
    decommission the PowerShell/Python system (never before).

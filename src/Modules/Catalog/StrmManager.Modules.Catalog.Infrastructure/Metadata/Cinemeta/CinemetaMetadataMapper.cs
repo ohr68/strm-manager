@@ -8,9 +8,9 @@ using StrmManager.Modules.Catalog.Domain.Shared;
 namespace StrmManager.Modules.Catalog.Infrastructure.Metadata.Cinemeta;
 
 /// <summary>
-/// Converts the raw Cinemeta DTO into provider-neutral SeriesMetadata. Deliberately maps
-/// only the fields Catalog synchronization currently uses (see ADR-007) - not Cinemeta's
-/// full schema.
+/// Converts the raw Cinemeta DTO into provider-neutral SeriesMetadata / MovieMetadata.
+/// Deliberately maps only the fields Catalog currently uses (see ADR-007) - not
+/// Cinemeta's full schema.
 /// </summary>
 internal static partial class CinemetaMetadataMapper
 {
@@ -40,6 +40,39 @@ internal static partial class CinemetaMetadataMapper
         var externalIds = new ExternalIds(meta.Id, null, null);
 
         return new SeriesMetadata(externalIds, meta.Name, null, year, status, episodes);
+    }
+
+    /// <summary>
+    /// Maps a Cinemeta movie meta object. The provider id becomes the canonical IMDb id
+    /// (the duplicate key), so a missing id is a failure, not a null. The release date is
+    /// optional at this boundary - a missing/unparsable one stays null and is never
+    /// invented (AddMovie decides what to do about it).
+    /// </summary>
+    public static Result<MovieMetadata> MapMovie(CinemetaMetaDto meta)
+    {
+        if (string.IsNullOrWhiteSpace(meta.Id))
+        {
+            return Result.Failure<MovieMetadata>(MetadataProviderErrors.InvalidResponse(ProviderName, "missing movie id"));
+        }
+
+        if (string.IsNullOrWhiteSpace(meta.Name))
+        {
+            return Result.Failure<MovieMetadata>(MetadataProviderErrors.InvalidResponse(ProviderName, "missing movie name"));
+        }
+
+        if (!TryParseYear(meta.ReleaseInfo, out int year))
+        {
+            return Result.Failure<MovieMetadata>(MetadataProviderErrors.InvalidResponse(ProviderName, "missing or invalid release year"));
+        }
+
+        DateTime? releaseAtUtc = TryParseUtc(meta.Released, out DateTime released) ? released : null;
+
+        return new MovieMetadata(
+            new ExternalIds(meta.Id, null, null),
+            meta.Name,
+            year,
+            ParseRuntimeMinutes(meta.Runtime),
+            releaseAtUtc);
     }
 
     private static EpisodeMetadata? MapEpisode(CinemetaVideoDto video, TimeSpan? seriesRuntime)

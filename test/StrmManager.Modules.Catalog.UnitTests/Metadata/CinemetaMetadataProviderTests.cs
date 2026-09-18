@@ -109,6 +109,56 @@ public class CinemetaMetadataProviderTests
     }
 
     [Fact]
+    public async Task GetSeriesAsync_Http200EmptyObject_ReturnsSeriesNotFound()
+    {
+        // Observed live: what Cinemeta answers for an unknown series id.
+        var handler = new FakeHttpMessageHandler((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(LoadFixture("unknown-series-empty-object.json")),
+        }));
+
+        Result<SeriesMetadata> result = await CreateProvider(handler).GetSeriesAsync("tt0000000");
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("Metadata.SeriesNotFound", result.Error.Code);
+        Assert.Equal(ErrorType.NotFound, result.Error.Type);
+    }
+
+    [Fact]
+    public async Task GetSeriesAsync_Http200MovieStyleIdOnlyStub_IsNotInferredAsNotFound_StaysInvalidResponse()
+    {
+        // The id-only stub was observed for MOVIES only. It is not assumed to exist for
+        // series, so if it ever shows up here it is an unrecognized response.
+        var handler = new FakeHttpMessageHandler((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(LoadFixture("movie-id-only-stub.json")),
+        }));
+
+        Result<SeriesMetadata> result = await CreateProvider(handler).GetSeriesAsync("tt0000000");
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("Metadata.InvalidResponse", result.Error.Code);
+    }
+
+    [Theory]
+    [InlineData("""{"meta":null}""")]
+    [InlineData("""{"error":"unexpected upstream payload"}""")]
+    [InlineData("""{"meta":{"id":"tt1","type":"series","poster":"https://example.invalid/p.jpg"}}""")]
+    [InlineData("""{"meta":{"id":"tt1","type":"series","releaseInfo":"2020-","status":"Continuing"}}""")]
+    public async Task GetSeriesAsync_MalformedResponseThatIsNotTheUnknownMediaStub_StaysInvalidResponse(string json)
+    {
+        var handler = new FakeHttpMessageHandler((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(json),
+        }));
+
+        Result<SeriesMetadata> result = await CreateProvider(handler).GetSeriesAsync("tt1");
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("Metadata.InvalidResponse", result.Error.Code);
+    }
+
+    [Fact]
     public async Task GetSeriesAsync_NetworkFailure_ReturnsProviderUnavailable()
     {
         var handler = new FakeHttpMessageHandler((_, _) =>

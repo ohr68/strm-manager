@@ -14,7 +14,7 @@ public class CinemetaMetadataMapperTests
     {
         string path = Path.Combine(AppContext.BaseDirectory, "Metadata", "Fixtures", fileName);
         string json = File.ReadAllText(path);
-        CinemetaSeriesResponseDto? response = JsonSerializer.Deserialize<CinemetaSeriesResponseDto>(json, SerializerOptions);
+        CinemetaMetaResponseDto? response = JsonSerializer.Deserialize<CinemetaMetaResponseDto>(json, SerializerOptions);
 
         return response?.Meta ?? throw new InvalidOperationException($"Fixture '{fileName}' has no meta object.");
     }
