@@ -142,7 +142,15 @@ public sealed class Episode : Entity
         return Result.Success();
     }
 
-    public Result MarkError(DateTime utcNow, string error)
+    /// <summary>
+    /// <paramref name="nextAttemptAtUtc"/> is the sole retryability signal - a non-null
+    /// value means this failure is eligible for automatic retry (the maintenance worker's
+    /// GetRetryableAsync query picks it up once due), null means it stays Error until a
+    /// manual retry. Always assigned explicitly (never left as whatever the loaded entity
+    /// already had) so a stale value from a prior Unavailable/Error cycle can never leak
+    /// through and make a non-retryable failure look retryable. See ADR-013.
+    /// </summary>
+    public Result MarkError(DateTime utcNow, string error, DateTime? nextAttemptAtUtc = null)
     {
         if (Status is MediaStatus.Completed)
         {
@@ -152,7 +160,27 @@ public sealed class Episode : Entity
         Status = MediaStatus.Error;
         LastAttemptAtUtc = utcNow;
         AttemptCount++;
+        NextAttemptAtUtc = nextAttemptAtUtc;
         LastError = error;
+        UpdatedAtUtc = utcNow;
+        return Result.Success();
+    }
+
+    /// <summary>
+    /// Recovers an episode left in Searching/Validating by an interrupted processing run
+    /// (crash, restart, cancelled shutdown) back to Pending, so the next maintenance tick
+    /// picks it up again. This is deliberately not the same as MarkUnavailable/MarkError -
+    /// an interrupted run reached no outcome, so AttemptCount/LastError are left
+    /// untouched. See ADR-013.
+    /// </summary>
+    public Result RecoverInterruptedProcessing(DateTime utcNow)
+    {
+        if (Status is not (MediaStatus.Searching or MediaStatus.Validating))
+        {
+            return Result.Failure(MediaErrors.InvalidTransition(nameof(Episode), Status, MediaStatus.Pending));
+        }
+
+        Status = MediaStatus.Pending;
         UpdatedAtUtc = utcNow;
         return Result.Success();
     }

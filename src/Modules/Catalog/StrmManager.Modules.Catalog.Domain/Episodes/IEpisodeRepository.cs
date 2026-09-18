@@ -1,3 +1,5 @@
+using StrmManager.Modules.Catalog.Domain.Shared;
+
 namespace StrmManager.Modules.Catalog.Domain.Episodes;
 
 public interface IEpisodeRepository
@@ -11,6 +13,14 @@ public interface IEpisodeRepository
     Task<IReadOnlyList<Episode>> GetScheduledDueAsync(DateTime utcNow, CancellationToken cancellationToken = default);
 
     Task<IReadOnlyList<Episode>> GetRetryableAsync(DateTime utcNow, CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<Episode>> GetStaleProcessingAsync(DateTime staleThresholdUtc, CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<Episode>> GetPendingForProcessingAsync(int limit, CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyDictionary<MediaStatus, int>> GetStatusCountsAsync(CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<Episode>> GetByStatusAsync(MediaStatus? status, int skip, int take, CancellationToken cancellationToken = default);
 
     void Insert(Episode episode);
 }

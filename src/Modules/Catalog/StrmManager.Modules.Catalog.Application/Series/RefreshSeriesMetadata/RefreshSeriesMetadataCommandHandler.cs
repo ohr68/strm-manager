@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Options;
 using StrmManager.Common.Application.Messaging;
 using StrmManager.Common.Domain.Abstractions;
 using StrmManager.Modules.Catalog.Application.Abstractions.Data;
@@ -13,6 +14,7 @@ internal sealed class RefreshSeriesMetadataCommandHandler(
     IMetadataProvider metadataProvider,
     CatalogSynchronizer catalogSynchronizer,
     IUnitOfWork unitOfWork,
+    IOptions<MetadataRefreshOptions> metadataRefreshOptions,
     TimeProvider timeProvider)
     : ICommandHandler<RefreshSeriesMetadataCommand, CatalogSynchronizationResult>
 {
@@ -32,17 +34,28 @@ internal sealed class RefreshSeriesMetadataCommandHandler(
             return Result.Failure<CatalogSynchronizationResult>(SeriesErrors.MissingImdbId(series.Id));
         }
 
-        // HTTP call happens before any persistence work starts - no SQLite transaction
-        // is open while we wait on the provider (see ADR-007).
+        DateTime utcNow = timeProvider.GetUtcNow().UtcDateTime;
+        DateTime nextRefreshAtUtc = utcNow.Add(metadataRefreshOptions.Value.ActiveSeriesRefreshInterval);
+
+        // Marked as attempted (and the next check scheduled) before the provider call,
+        // not after - a provider failure below must still push the schedule forward, or
+        // a down provider would be hammered on every maintenance tick instead of waiting
+        // for the next interval (see ADR-013).
+        series.MarkMetadataRefreshAttempted(utcNow, nextRefreshAtUtc);
+
+        // HTTP call happens before any further persistence work starts - no SQLite
+        // transaction is open while we wait on the provider (see ADR-007).
         Result<SeriesMetadata> metadataResult = await metadataProvider.GetSeriesAsync(imdbId, cancellationToken);
 
         if (metadataResult.IsFailure)
         {
+            // Existing catalog data (seasons/episodes already synced) is left untouched -
+            // only the refresh-tracking fields above are persisted.
+            await unitOfWork.SaveChangesAsync(cancellationToken);
             return Result.Failure<CatalogSynchronizationResult>(metadataResult.Error);
         }
 
         SeriesMetadata metadata = metadataResult.Value;
-        DateTime utcNow = timeProvider.GetUtcNow().UtcDateTime;
 
         series.UpdateMetadata(metadata.Title, metadata.OriginalTitle, metadata.Year, metadata.Status, utcNow);
 

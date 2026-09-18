@@ -19,12 +19,15 @@ using SeriesEntity = StrmManager.Modules.Catalog.Domain.Series.Series;
 namespace StrmManager.Modules.Catalog.Application.Episodes.ProcessEpisode;
 
 /// <summary>
-/// Explicit, single-episode processing pipeline (Phase 3 - no scheduler, no automatic
-/// retry). Searching/Validating are transitioned in memory only and never persisted on
-/// their own - a single SaveChangesAsync happens once, at whatever terminal outcome
-/// (Completed/Unavailable/Error) is reached. A crash mid-pipeline therefore leaves the
-/// episode exactly as it was loaded (Pending) - see ADR-011 for the full reasoning and
-/// why this needs no separate Phase 4 recovery worker.
+/// Single-episode processing pipeline, called both by POST /api/episodes/{id}/process
+/// and by Scheduling's EpisodeProcessingWorker (see ADR-013) - there is exactly one
+/// pipeline, never a duplicated one. StartSearching is persisted immediately (the
+/// "claim") before any slow external work begins, using UpdatedAtUtc as an optimistic-
+/// concurrency token so a second, overlapping claim of the same episode fails cleanly
+/// instead of both callers processing it. StartValidating is persisted too, primarily so
+/// a crashed/stuck run is diagnosable and recoverable by the maintenance worker's
+/// stale-processing sweep. This supersedes ADR-011's "never persist Searching/Validating"
+/// design - see ADR-013 for why Phase 4's claim requirement changed that calculus.
 /// </summary>
 internal sealed partial class ProcessEpisodeCommandHandler(
     IEpisodeRepository episodeRepository,
@@ -66,11 +69,22 @@ internal sealed partial class ProcessEpisodeCommandHandler(
             return Result.Failure<ProcessEpisodeResult>(startSearchingResult.Error);
         }
 
+        // Persist the claim now, before any slow external work - a concurrency conflict
+        // here means another request already claimed this episode between our load and
+        // this save (see EpisodeConfiguration's UpdatedAtUtc concurrency token / ADR-013).
+        bool claimed = await unitOfWork.TrySaveChangesAsync(cancellationToken);
+
+        if (!claimed)
+        {
+            LogClaimConflict(logger, episode.Id);
+            return Result.Failure<ProcessEpisodeResult>(EpisodeErrors.AlreadyBeingProcessed(episode.Id));
+        }
+
         (Season Season, SeriesEntity Series)? catalogContext = await LoadCatalogContextAsync(episode, cancellationToken);
 
         if (catalogContext is null)
         {
-            return await FinishAsError(episode, "Season or Series record is missing for this episode.", cancellationToken);
+            return await FinishAsError(episode, "Season or Series record is missing for this episode.", isRetryable: false, cancellationToken);
         }
 
         var streamReference = new EpisodeStreamReference(episode.ExternalId, episode.SeasonNumber, episode.EpisodeNumber, episode.Title, episode.Runtime);
@@ -79,7 +93,10 @@ internal sealed partial class ProcessEpisodeCommandHandler(
         if (streamsResult.IsFailure)
         {
             LogProviderFailure(logger, episode.Id, streamsResult.Error.Code);
-            return await FinishAsError(episode, streamsResult.Error.Description, cancellationToken);
+            // Stream-provider failures (unavailable/timeout/invalid response) are always
+            // transient/technical, never a permanent condition about this episode -
+            // eligible for automatic retry (see ADR-013).
+            return await FinishAsError(episode, streamsResult.Error.Description, isRetryable: true, cancellationToken);
         }
 
         IReadOnlyList<StreamCandidate> candidates = streamsResult.Value;
@@ -90,6 +107,10 @@ internal sealed partial class ProcessEpisodeCommandHandler(
         }
 
         episode.StartValidating(timeProvider.GetUtcNow().UtcDateTime);
+
+        // No concurrency risk here - a second claimant could only exist if it had won
+        // the earlier claim-save instead of this run, which is mutually exclusive.
+        await unitOfWork.SaveChangesAsync(cancellationToken);
 
         int attemptsThisRun = 0;
         StreamCandidate? approvedCandidate = null;
@@ -141,7 +162,10 @@ internal sealed partial class ProcessEpisodeCommandHandler(
 
         if (writeResult.IsFailure)
         {
-            return await FinishAsError(episode, $"Failed to write .strm file: {writeResult.Error.Description}", cancellationToken, attemptsThisRun);
+            // Filesystem/path failures (traversal rejection, permission, disk) are
+            // treated as potentially persistent configuration problems, not hammered
+            // automatically - see ADR-013.
+            return await FinishAsError(episode, $"Failed to write .strm file: {writeResult.Error.Description}", isRetryable: false, cancellationToken, attemptsThisRun);
         }
 
         StrmFile? existingStrmFile = await strmFileRepository.GetForEpisodeAsync(episode.Id, cancellationToken);
@@ -215,11 +239,12 @@ internal sealed partial class ProcessEpisodeCommandHandler(
     }
 
     private async Task<Result<ProcessEpisodeResult>> FinishAsError(
-        Episode episode, string reason, CancellationToken cancellationToken, int attempts = 0)
+        Episode episode, string reason, bool isRetryable, CancellationToken cancellationToken, int attempts = 0)
     {
         DateTime utcNow = timeProvider.GetUtcNow().UtcDateTime;
+        DateTime? nextAttemptAtUtc = isRetryable ? utcNow.Add(processingOptions.Value.RetryableErrorDelay) : null;
 
-        episode.MarkError(utcNow, reason);
+        episode.MarkError(utcNow, reason, nextAttemptAtUtc);
 
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
@@ -227,6 +252,9 @@ internal sealed partial class ProcessEpisodeCommandHandler(
 
         return new ProcessEpisodeResult(episode.Id, MediaStatus.Error.ToString(), attempts, null, null, reason);
     }
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Episode {EpisodeId} is already being processed by another request - claim rejected")]
+    private static partial void LogClaimConflict(ILogger logger, Guid episodeId);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Stream provider failed for episode {EpisodeId}: {ErrorCode}")]
     private static partial void LogProviderFailure(ILogger logger, Guid episodeId, string errorCode);

@@ -18,6 +18,14 @@ internal sealed class EpisodeConfiguration : IEntityTypeConfiguration<Episode>
         builder.Property(episode => episode.Status).HasConversion<string>().HasMaxLength(32);
         builder.Property(episode => episode.LastError).HasMaxLength(2048);
 
+        // UpdatedAtUtc doubles as an application-managed optimistic-concurrency token
+        // (SQLite has no native rowversion type) - this is what lets
+        // ProcessEpisodeCommandHandler's claim (Pending -> Searching) reject a second,
+        // overlapping claim of the same episode with a DbUpdateConcurrencyException
+        // instead of both callers silently proceeding. See ADR-013. No new column - the
+        // field already existed and was already updated on every transition.
+        builder.Property(episode => episode.UpdatedAtUtc).IsConcurrencyToken();
+
         builder.HasIndex(episode => new { episode.SeasonId, episode.EpisodeNumber }).IsUnique();
         // ExternalId (e.g. "tt27497393:1:9") is globally unique per the whole catalog,
         // not just per season - a second, independent guard against duplicate

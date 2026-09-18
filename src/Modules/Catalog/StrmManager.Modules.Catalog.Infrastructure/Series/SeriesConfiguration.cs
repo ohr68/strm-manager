@@ -16,6 +16,8 @@ internal sealed class SeriesConfiguration : IEntityTypeConfiguration<SeriesEntit
         builder.Property(series => series.OriginalTitle).HasMaxLength(512);
         builder.Property(series => series.Status).HasConversion<string>().HasMaxLength(32);
 
+        builder.HasIndex(series => series.NextMetadataRefreshAtUtc);
+
         builder.OwnsOne(series => series.ExternalIds, ownedBuilder =>
         {
             ownedBuilder.Property(externalIds => externalIds.ImdbId).HasColumnName("imdb_id").HasMaxLength(32);

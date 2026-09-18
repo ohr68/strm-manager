@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using StrmManager.Common.Application.Messaging;
 using StrmManager.Common.Domain.Abstractions;
 using StrmManager.Modules.Catalog.Application.Abstractions.Data;
@@ -23,6 +24,7 @@ internal sealed partial class AddSeriesCommandHandler(
     IMetadataProvider metadataProvider,
     CatalogSynchronizer catalogSynchronizer,
     IUnitOfWork unitOfWork,
+    IOptions<MetadataRefreshOptions> metadataRefreshOptions,
     TimeProvider timeProvider,
     ILogger<AddSeriesCommandHandler> logger)
     : ICommandHandler<AddSeriesCommand, Guid>
@@ -45,6 +47,12 @@ internal sealed partial class AddSeriesCommandHandler(
         seriesRepository.Insert(series);
 
         Result<SeriesMetadata> metadataResult = await metadataProvider.GetSeriesAsync(command.ImdbId, cancellationToken);
+
+        // Tracked the same way a background refresh would be, so the maintenance
+        // worker's next-due check is meaningful immediately rather than relying on its
+        // "NextMetadataRefreshAtUtc == null means due now" fallback.
+        DateTime nextRefreshAtUtc = utcNow.Add(metadataRefreshOptions.Value.ActiveSeriesRefreshInterval);
+        series.MarkMetadataRefreshAttempted(utcNow, nextRefreshAtUtc);
 
         if (metadataResult.IsSuccess)
         {
