@@ -11,11 +11,14 @@ architecture - it only exists today as the legacy client being replaced.
 
 ## Status
 
-This is the **foundation** of the project: solution structure, the `Catalog` module's
-domain model (Series/Season/Episode/Movie lifecycle), SQLite persistence, a minimal HTTP
-API, and the test/Docker/CI scaffolding. Metadata providers (Cinemeta), stream discovery
-(FrostStream), media validation (`ffprobe`) and the scheduler are **not implemented yet** -
-see [docs/architecture.md](docs/architecture.md) for the full plan.
+Phase 1 (foundation) and Phase 1.1 (hardening) are done: solution structure, the
+`Catalog` module's domain model (Series/Season/Episode/Movie lifecycle), SQLite
+persistence with referential integrity, global exception handling, and the test/Docker
+scaffolding. Phase 2 added metadata: given an IMDb series id, STRM Manager retrieves
+metadata from Cinemeta and persists/refreshes its Series/Season/Episode graph
+idempotently. Stream discovery (FrostStream), media validation (`ffprobe`), STRM
+generation and the scheduler are **not implemented yet** - see
+[docs/architecture.md](docs/architecture.md) for the full plan.
 
 ## Architecture
 
@@ -31,11 +34,12 @@ other through public interfaces registered in DI, never through internal types.
                             |
                     STRM Manager Server
                             |
-        +-------------------+--------------------+
-        |                   |                    |
-     Catalog            Providers            MediaProcessing
-   (Series/Season/     (Metadata/Stream    (Validation/SourceSelection/
-    Episode/Movie)        abstractions)        StrmGeneration)
+        +-------------------+
+        |                   |
+     Catalog            MediaProcessing (planned)
+ (Series/Season/     (Stream discovery/Validation/
+  Episode/Movie,          StrmGeneration)
+  + metadata sync)
 ```
 
 See [docs/architecture.md](docs/architecture.md) for the dependency diagram, the Episode
@@ -45,11 +49,15 @@ full complexity (no MediatR, no Outbox/Inbox, no Postgres/Redis/MassTransit).
 
 ## Modules
 
+There is no separate `Providers` module - metadata retrieval turned out to be small
+enough to live inside `Catalog` (`Catalog.Application/Metadata/`,
+`Catalog.Infrastructure/Metadata/Cinemeta/`). See
+[ADR-007](docs/adr/ADR-007-metadata-provider-and-catalog-synchronization.md).
+
 | Module | Status | Responsibility |
 |---|---|---|
-| `Catalog` | Implemented | Series, Season, Episode, Movie, SourceAttempt, StrmFile - the domain and its persistence. |
-| `Providers` | Planned | `IMetadataProvider` (Cinemeta) and `IStreamProvider` (FrostStream) abstractions. |
-| `MediaProcessing` | Planned | `IMediaValidator` (ffprobe), source selection, `.strm` writing. |
+| `Catalog` | Implemented | Series, Season, Episode, Movie, SourceAttempt, StrmFile, plus metadata retrieval (`IMetadataProvider`/Cinemeta) and synchronization (`CatalogSynchronizer`). |
+| `MediaProcessing` | Planned | `IStreamProvider` (FrostStream), `IMediaValidator` (ffprobe), source selection, `.strm` writing. |
 | `Scheduling` | Planned | `BackgroundService`s for release processing and retries. |
 
 ## Stack
@@ -85,9 +93,18 @@ deploy-time migration step). In `Development` the SQLite file is created under
 
 ```bash
 curl http://localhost:5221/health
+
+# Adding a series retrieves its metadata from Cinemeta inline (best-effort - the series
+# is still created even if Cinemeta is unreachable or has no entry for this id).
 curl -X POST http://localhost:5221/api/series \
   -H "Content-Type: application/json" \
-  -d '{"imdbId":"tt27497393","tmdbId":"12345","title":"Paradise","year":2025}'
+  -d '{"imdbId":"tt27497393","title":"Placeholder","year":2026}'
+
+curl http://localhost:5221/api/series/{id}/seasons
+curl http://localhost:5221/api/seasons/{seasonId}/episodes
+
+# Re-sync later (idempotent - safe to call repeatedly):
+curl -X POST http://localhost:5221/api/series/{id}/refresh
 ```
 
 ## Configuration
@@ -104,6 +121,25 @@ environment variables). The connection string is:
 ```
 
 Override it with the `ConnectionStrings__Database` environment variable in Docker/Compose.
+
+Metadata provider (Cinemeta), validated at startup:
+
+```json
+{
+  "Metadata": {
+    "Cinemeta": {
+      "BaseUrl": "https://v3-cinemeta.strem.io/",
+      "TimeoutSeconds": 10
+    }
+  }
+}
+```
+
+`BaseUrl` defaults to the public Cinemeta addon (not machine-specific, safe to ship as a
+default) - override via `Metadata__Cinemeta__BaseUrl`/`Metadata__Cinemeta__TimeoutSeconds`
+if needed. HTTP resilience (timeout + a couple of retries on transient failures only,
+never on 404) is configured once in `CatalogModule` - see
+[ADR-007](docs/adr/ADR-007-metadata-provider-and-catalog-synchronization.md).
 
 ## Database & migrations
 
@@ -129,8 +165,13 @@ a future startup project stops referencing `Catalog.Infrastructure` transitively
 dotnet test
 ```
 
-- `test/StrmManager.Modules.Catalog.UnitTests` - Episode lifecycle/state machine.
-- `test/StrmManager.Modules.Catalog.IntegrationTests` - API + SQLite, via `WebApplicationFactory`.
+- `test/StrmManager.Modules.Catalog.UnitTests` - Episode lifecycle/state machine, Cinemeta
+  mapping (fixture-based, see `Metadata/Fixtures/`), `CinemetaMetadataProvider` HTTP/error
+  handling (fake `HttpMessageHandler`, no live Cinemeta).
+- `test/StrmManager.Modules.Catalog.IntegrationTests` - API + SQLite, via `WebApplicationFactory`,
+  including the full add/refresh/discover-new-episode flow against a `FakeMetadataProvider`
+  (`ApiWebApplicationFactory` registers it by default for every test in this project - no
+  test ever hits live Cinemeta).
 - `test/StrmManager.ArchitectureTests` - layering rules (Domain -> Application -> Infrastructure/Presentation), enforced with NetArchTest.
 
 ## Docker
@@ -151,12 +192,17 @@ docker run -p 8080:8080 \
 | Method | Path | Description |
 |---|---|---|
 | GET | `/health` | Liveness/readiness, including database connectivity. |
-| POST | `/api/series` | Adds a series by IMDb id (idempotent). |
-| GET | `/api/series/{id}` | Returns a series by id. |
+| POST | `/api/series` | Adds a series by IMDb id (idempotent) and synchronizes its metadata inline, best-effort. |
+| GET | `/api/series/{id}` | Returns a series by id (not its seasons/episodes - see below). |
+| POST | `/api/series/{id}/refresh` | Re-syncs a series against the metadata provider; idempotent, preserves `Completed`/`Unavailable` episode state. |
+| GET | `/api/series/{id}/seasons` | Lists a series' seasons. |
+| GET | `/api/seasons/{id}/episodes` | Lists a season's episodes. |
 
-More endpoints (seasons, episodes, movies, retry, status) will be added as the
-corresponding use cases and modules are implemented - see
-[docs/architecture.md](docs/architecture.md#incremental-plan).
+`GET /api/series/{id}` intentionally does not return the full season/episode graph by
+default (it can get large) - use the dedicated seasons/episodes endpoints.
+
+More endpoints (movies, retry, status) will be added as the corresponding use cases and
+modules are implemented - see [docs/architecture.md](docs/architecture.md#incremental-plan).
 
 ## Related projects
 

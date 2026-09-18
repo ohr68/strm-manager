@@ -15,6 +15,18 @@ The briefing is explicit that the domain must not depend on any specific provide
 Cinemeta, FrostStream and ffprobe are implementation details, not requirements the
 `Catalog` domain should ever import.
 
+> **Phase 2 update**: this ADR was written before any of it existed, and sketched
+> `Providers.Application`/`Providers.Infrastructure` as dedicated modules. The metadata
+> provider, once actually implemented, turned out not to need a dedicated module - see
+> [ADR-007](ADR-007-metadata-provider-and-catalog-synchronization.md) for what was
+> actually built (`IMetadataProvider`/`CinemetaMetadataProvider` embedded in
+> `Catalog.Application`/`Catalog.Infrastructure`) and why the smaller structure was
+> preferred. The interface signature below is otherwise accurate to what shipped. The
+> stream/validation contracts (`IStreamProvider`, `IMediaValidator`, `IStrmWriter`) are
+> still just a sketch - not implemented yet (Phase 3+); whether they end up in `Catalog`
+> too or in a real `MediaProcessing` module will be decided when that phase starts, the
+> same way this decision was.
+
 ## Decision
 
 Define the provider contracts at the `Application` layer of dedicated modules, with

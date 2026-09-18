@@ -27,10 +27,14 @@ StrmManager.Api
 Common.Presentation --> Common.Application --> Common.Domain
 ```
 
-Planned modules (`Providers`, `MediaProcessing`, `Scheduling`) will depend on
-`Catalog.Domain` (they operate on `Episode`/`Movie`) and `Catalog.Application`
-(repositories, `IUnitOfWork`), but `Catalog` will never depend back on them - see
-[ADR-004](adr/ADR-004-provider-abstractions.md).
+`IMetadataProvider` (Phase 2) lives inside `Catalog.Application/Metadata/`, and its
+Cinemeta implementation inside `Catalog.Infrastructure/Metadata/Cinemeta/` - **not** a
+separate `Providers` project, despite ADR-004 originally sketching one. See
+[ADR-007](adr/ADR-007-metadata-provider-and-catalog-synchronization.md) for why the
+smaller structure was chosen once there was something real to build. `MediaProcessing`/
+`Scheduling` (not implemented yet) will depend on `Catalog.Domain` (they operate on
+`Episode`/`Movie`) and `Catalog.Application` (repositories, `IUnitOfWork`), but `Catalog`
+will never depend back on them.
 
 There is no `Common.Infrastructure` project. It existed in the initial foundation as an
 empty shell (mirroring Evently's `Evently.Common.Infrastructure`, which holds shared
@@ -123,13 +127,36 @@ retry policy shapes). Extracting a shared base/state-machine abstraction before 
 real divergence shows up would be guessing at the wrong boundary. Revisit once
 `Scheduling` is implemented and it's clear whether the two really do stay in lockstep.
 
-## Processing pipeline (planned - Providers/MediaProcessing/Scheduling)
+## Catalog synchronization (implemented, Phase 2)
+
+```
+External series id (IMDb)
+  -> IMetadataProvider.GetSeriesAsync(externalId)      [CinemetaMetadataProvider]
+  -> SeriesMetadata (provider-neutral)
+  -> Series.UpdateMetadata(title, originalTitle, year, status, utcNow)
+  -> CatalogSynchronizer.SynchronizeAsync(seriesId, episodes, utcNow, ct)
+       for each season group:
+         get-or-create Season
+         for each episode (skip if no ReleaseAtUtc):
+           match by ExternalId, fall back to (SeasonNumber, EpisodeNumber)
+           new -> Episode.Schedule(...)
+           existing -> Episode.UpdateMetadata(...) + TryBecomeEligible(utcNow)
+  -> IUnitOfWork.SaveChangesAsync()   (single call, after the HTTP work is done)
+```
+
+Driven by `POST /api/series` (first sync, inline, best-effort) and
+`POST /api/series/{id}/refresh` (explicit resync) - both call the same
+`CatalogSynchronizer`, so idempotency/matching/status-preservation rules exist in one
+place. Full reasoning, including why this isn't a separate `Providers` module, in
+[ADR-007](adr/ADR-007-metadata-provider-and-catalog-synchronization.md).
+
+## Processing pipeline (planned - MediaProcessing/Scheduling)
 
 ```
 Scheduler tick
   -> IEpisodeRepository.GetScheduledDueAsync / GetRetryableAsync
   -> Episode.StartSearching()
-  -> IStreamProvider.GetStreamsAsync(episode)          [Providers]
+  -> IStreamProvider.GetStreamsAsync(episode)          [not implemented yet]
   -> for each StreamCandidate (in preference order):
        Episode.StartValidating()
        IMediaValidator.ValidateAsync(candidate, reference)   [MediaProcessing, ffprobe]
@@ -152,21 +179,26 @@ SQLite has no schema concept - so table names are simply prefixed by convention
 (`series`, `seasons`, `episodes`, `movies`, `source_attempts`, `strm_files`). See
 [ADR-002](adr/ADR-002-sqlite.md).
 
+Migrations so far: `InitialCreate` (Phase 1), `AddCatalogForeignKeys` (Phase 1.1, see
+[ADR-005](adr/ADR-005-catalog-relational-integrity.md)), `AddEpisodeExternalIdUniqueIndex`
+(Phase 2, see [ADR-007](adr/ADR-007-metadata-provider-and-catalog-synchronization.md)).
+
 ## Incremental plan
 
-1. ~~Foundation: solution, `Catalog` domain + persistence, health check, tests, Docker~~ (this delivery)
-2. `Providers` module: `IMetadataProvider`/`CinemetaMetadataProvider`,
-   `IStreamProvider`/`FrostStreamProvider`, with fixture-based tests (no live HTTP calls
-   in CI).
-3. `MediaProcessing` module: `IMediaValidator`/`FfprobeMediaValidator` (wrapping the
-   validation rules already proven in the Python backend - duration tolerance,
-   codec checks), `ISourceSelector`, `IStrmWriter` (atomic temp-file-then-rename writes,
-   Jellyfin-compatible paths).
-4. `Scheduling` module: `BackgroundService`s for `ReleaseProcessing` (Scheduled -> Pending)
+1. ~~Foundation: solution, `Catalog` domain + persistence, health check, tests, Docker~~ (Phase 1)
+2. ~~Phase 1.1 hardening: FK relationships, global exception handling, `BackgroundService`
+   scope decision, cleanup~~
+3. ~~Metadata: `IMetadataProvider`/`CinemetaMetadataProvider`, catalog synchronization
+   (`Series`/`Season`/`Episode` from an IMDb id), with fixture-based tests (no live HTTP
+   calls in CI)~~ (Phase 2 - this delivery)
+4. `MediaProcessing`: `IStreamProvider`/`FrostStreamProvider`,
+   `IMediaValidator`/`FfprobeMediaValidator` (wrapping the validation rules already
+   proven in the Python backend - duration tolerance, codec checks), `ISourceSelector`,
+   `IStrmWriter` (atomic temp-file-then-rename writes, Jellyfin-compatible paths).
+5. `Scheduling` module: `BackgroundService`s for `ReleaseProcessing` (Scheduled -> Pending)
    and `RetryProcessing` (Unavailable/Error -> Pending), bounded concurrency
-   (`MaxConcurrentEpisodeProcessing`).
-5. Season/Episode sync use cases (`RefreshSeriesMetadataCommand`) wiring `Catalog` to
-   `Providers`.
-6. Movie use cases mirroring the Episode pipeline.
+   (`MaxConcurrentEpisodeProcessing`) - see [ADR-003](adr/ADR-003-background-service-scheduler.md)
+   for the `IServiceScopeFactory` pattern this must follow.
+6. Movie use cases mirroring the Episode metadata-sync and processing pipeline.
 7. Only after the above has test coverage equivalent to the current Python backend:
    decommission the PowerShell/Python system (never before).
