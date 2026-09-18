@@ -1,0 +1,1668 @@
+﻿
+============================================================
+FILE: src\Modules\Catalog\StrmManager.Modules.Catalog.Domain\Movies\Movie.cs
+============================================================
+using StrmManager.Common.Domain.Abstractions;
+using StrmManager.Modules.Catalog.Domain.Shared;
+
+namespace StrmManager.Modules.Catalog.Domain.Movies;
+
+public sealed class Movie : Entity
+{
+    private Movie()
+    {
+    }
+
+    public Guid Id { get; private set; }
+
+    public ExternalIds ExternalIds { get; private set; } = null!;
+
+    public string Title { get; private set; } = string.Empty;
+
+    public int Year { get; private set; }
+
+    public TimeSpan? Runtime { get; private set; }
+
+    public DateTime ReleaseAtUtc { get; private set; }
+
+    public MediaStatus Status { get; private set; }
+
+    public DateTime? LastAttemptAtUtc { get; private set; }
+
+    public DateTime? NextAttemptAtUtc { get; private set; }
+
+    public int AttemptCount { get; private set; }
+
+    public string? LastError { get; private set; }
+
+    public DateTime CreatedAtUtc { get; private set; }
+
+    public DateTime UpdatedAtUtc { get; private set; }
+
+    public static Movie Schedule(
+        ExternalIds externalIds,
+        string title,
+        int year,
+        TimeSpan? runtime,
+        DateTime releaseAtUtc,
+        DateTime utcNow)
+    {
+        var movie = new Movie
+        {
+            Id = Guid.NewGuid(),
+            ExternalIds = externalIds,
+            Title = title,
+            Year = year,
+            Runtime = runtime,
+            ReleaseAtUtc = releaseAtUtc,
+            Status = MediaStatus.Scheduled,
+            AttemptCount = 0,
+            CreatedAtUtc = utcNow,
+            UpdatedAtUtc = utcNow,
+        };
+
+        movie.TryBecomeEligible(utcNow);
+
+        return movie;
+    }
+
+    public bool TryBecomeEligible(DateTime utcNow)
+    {
+        if (Status != MediaStatus.Scheduled || ReleaseAtUtc > utcNow)
+        {
+            return false;
+        }
+
+        Status = MediaStatus.Pending;
+        UpdatedAtUtc = utcNow;
+        return true;
+    }
+
+    public Result StartSearching(DateTime utcNow)
+    {
+        if (Status != MediaStatus.Pending)
+        {
+            return Result.Failure(MediaErrors.InvalidTransition(nameof(Movie), Status, MediaStatus.Searching));
+        }
+
+        Status = MediaStatus.Searching;
+        UpdatedAtUtc = utcNow;
+        return Result.Success();
+    }
+
+    public Result StartValidating(DateTime utcNow)
+    {
+        if (Status != MediaStatus.Searching)
+        {
+            return Result.Failure(MediaErrors.InvalidTransition(nameof(Movie), Status, MediaStatus.Validating));
+        }
+
+        Status = MediaStatus.Validating;
+        UpdatedAtUtc = utcNow;
+        return Result.Success();
+    }
+
+    public Result MarkCompleted(DateTime utcNow)
+    {
+        if (Status is not (MediaStatus.Validating or MediaStatus.Searching))
+        {
+            return Result.Failure(MediaErrors.InvalidTransition(nameof(Movie), Status, MediaStatus.Completed));
+        }
+
+        Status = MediaStatus.Completed;
+        LastAttemptAtUtc = utcNow;
+        AttemptCount++;
+        NextAttemptAtUtc = null;
+        LastError = null;
+        UpdatedAtUtc = utcNow;
+        return Result.Success();
+    }
+
+    public Result MarkUnavailable(DateTime utcNow, DateTime? nextAttemptAtUtc, string? reason)
+    {
+        if (Status is not (MediaStatus.Searching or MediaStatus.Validating))
+        {
+            return Result.Failure(MediaErrors.InvalidTransition(nameof(Movie), Status, MediaStatus.Unavailable));
+        }
+
+        Status = MediaStatus.Unavailable;
+        LastAttemptAtUtc = utcNow;
+        AttemptCount++;
+        NextAttemptAtUtc = nextAttemptAtUtc;
+        LastError = reason;
+        UpdatedAtUtc = utcNow;
+        return Result.Success();
+    }
+
+    public Result MarkError(DateTime utcNow, string error)
+    {
+        if (Status is MediaStatus.Completed)
+        {
+            return Result.Failure(MediaErrors.InvalidTransition(nameof(Movie), Status, MediaStatus.Error));
+        }
+
+        Status = MediaStatus.Error;
+        LastAttemptAtUtc = utcNow;
+        AttemptCount++;
+        LastError = error;
+        UpdatedAtUtc = utcNow;
+        return Result.Success();
+    }
+
+    public Result Retry(DateTime utcNow)
+    {
+        if (Status is not (MediaStatus.Unavailable or MediaStatus.Error))
+        {
+            return Result.Failure(MediaErrors.InvalidTransition(nameof(Movie), Status, MediaStatus.Pending));
+        }
+
+        Status = MediaStatus.Pending;
+        NextAttemptAtUtc = null;
+        UpdatedAtUtc = utcNow;
+        return Result.Success();
+    }
+}
+
+============================================================
+FILE: src\Modules\Catalog\StrmManager.Modules.Catalog.Domain\Movies\IMovieRepository.cs
+============================================================
+namespace StrmManager.Modules.Catalog.Domain.Movies;
+
+public interface IMovieRepository
+{
+    Task<Movie?> GetAsync(Guid id, CancellationToken cancellationToken = default);
+
+    Task<Movie?> GetByImdbIdAsync(string imdbId, CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<Movie>> GetScheduledDueAsync(DateTime utcNow, CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<Movie>> GetRetryableAsync(DateTime utcNow, CancellationToken cancellationToken = default);
+
+    void Insert(Movie movie);
+}
+
+============================================================
+FILE: src\Modules\Catalog\StrmManager.Modules.Catalog.Infrastructure\Movies\MovieConfiguration.cs
+============================================================
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata.Builders;
+using StrmManager.Modules.Catalog.Domain.Movies;
+
+namespace StrmManager.Modules.Catalog.Infrastructure.Movies;
+
+internal sealed class MovieConfiguration : IEntityTypeConfiguration<Movie>
+{
+    public void Configure(EntityTypeBuilder<Movie> builder)
+    {
+        builder.ToTable("movies");
+
+        builder.HasKey(movie => movie.Id);
+
+        builder.Property(movie => movie.Title).IsRequired().HasMaxLength(512);
+        builder.Property(movie => movie.Status).HasConversion<string>().HasMaxLength(32);
+        builder.Property(movie => movie.LastError).HasMaxLength(2048);
+
+        builder.OwnsOne(movie => movie.ExternalIds, ownedBuilder =>
+        {
+            ownedBuilder.Property(externalIds => externalIds.ImdbId).HasColumnName("imdb_id").HasMaxLength(32);
+            ownedBuilder.Property(externalIds => externalIds.TmdbId).HasColumnName("tmdb_id").HasMaxLength(32);
+            ownedBuilder.Property(externalIds => externalIds.TvdbId).HasColumnName("tvdb_id").HasMaxLength(32);
+            ownedBuilder.HasIndex(externalIds => externalIds.ImdbId).IsUnique();
+        });
+
+        builder.HasIndex(movie => movie.Status);
+        builder.HasIndex(movie => movie.ReleaseAtUtc);
+        builder.HasIndex(movie => movie.NextAttemptAtUtc);
+    }
+}
+
+============================================================
+FILE: src\Modules\Catalog\StrmManager.Modules.Catalog.Infrastructure\Movies\MovieRepository.cs
+============================================================
+using Microsoft.EntityFrameworkCore;
+using StrmManager.Modules.Catalog.Domain.Movies;
+using StrmManager.Modules.Catalog.Domain.Shared;
+using StrmManager.Modules.Catalog.Infrastructure.Database;
+
+namespace StrmManager.Modules.Catalog.Infrastructure.Movies;
+
+internal sealed class MovieRepository(CatalogDbContext context) : IMovieRepository
+{
+    public async Task<Movie?> GetAsync(Guid id, CancellationToken cancellationToken = default) =>
+        await context.Movies.SingleOrDefaultAsync(movie => movie.Id == id, cancellationToken);
+
+    public async Task<Movie?> GetByImdbIdAsync(string imdbId, CancellationToken cancellationToken = default) =>
+        await context.Movies.SingleOrDefaultAsync(movie => movie.ExternalIds.ImdbId == imdbId, cancellationToken);
+
+    public async Task<IReadOnlyList<Movie>> GetScheduledDueAsync(DateTime utcNow, CancellationToken cancellationToken = default) =>
+        await context.Movies
+            .Where(movie => movie.Status == MediaStatus.Scheduled && movie.ReleaseAtUtc <= utcNow)
+            .ToListAsync(cancellationToken);
+
+    public async Task<IReadOnlyList<Movie>> GetRetryableAsync(DateTime utcNow, CancellationToken cancellationToken = default) =>
+        await context.Movies
+            .Where(movie =>
+                (movie.Status == MediaStatus.Unavailable || movie.Status == MediaStatus.Error) &&
+                movie.NextAttemptAtUtc != null &&
+                movie.NextAttemptAtUtc <= utcNow)
+            .ToListAsync(cancellationToken);
+
+    public void Insert(Movie movie) => context.Movies.Add(movie);
+}
+
+============================================================
+FILE: src\Modules\Catalog\StrmManager.Modules.Catalog.Domain\Series\Series.cs
+============================================================
+using StrmManager.Common.Domain.Abstractions;
+using StrmManager.Modules.Catalog.Domain.Shared;
+
+namespace StrmManager.Modules.Catalog.Domain.Series;
+
+public sealed class Series : Entity
+{
+    private Series()
+    {
+    }
+
+    public Guid Id { get; private set; }
+
+    public ExternalIds ExternalIds { get; private set; } = null!;
+
+    public string Title { get; private set; } = string.Empty;
+
+    public string? OriginalTitle { get; private set; }
+
+    public int Year { get; private set; }
+
+    public SeriesStatus Status { get; private set; }
+
+    public DateTime? LastMetadataRefreshAtUtc { get; private set; }
+
+    public DateTime? NextMetadataRefreshAtUtc { get; private set; }
+
+    public DateTime CreatedAtUtc { get; private set; }
+
+    public DateTime UpdatedAtUtc { get; private set; }
+
+    public static Series Create(
+        ExternalIds externalIds,
+        string title,
+        string? originalTitle,
+        int year,
+        DateTime utcNow) =>
+        new()
+        {
+            Id = Guid.NewGuid(),
+            ExternalIds = externalIds,
+            Title = title,
+            OriginalTitle = originalTitle,
+            Year = year,
+            Status = SeriesStatus.Active,
+            CreatedAtUtc = utcNow,
+            UpdatedAtUtc = utcNow,
+        };
+
+    public void UpdateMetadata(string title, string? originalTitle, int year, SeriesStatus status, DateTime utcNow)
+    {
+        Title = title;
+        OriginalTitle = originalTitle;
+        Year = year;
+        Status = status;
+        UpdatedAtUtc = utcNow;
+    }
+
+    /// <summary>
+    /// Records that a metadata refresh was attempted, regardless of whether it
+    /// succeeded - a provider failure must still push NextMetadataRefreshAtUtc forward
+    /// so the maintenance worker doesn't retry a down provider on every tick. See
+    /// ADR-013.
+    /// </summary>
+    public void MarkMetadataRefreshAttempted(DateTime utcNow, DateTime nextRefreshAtUtc)
+    {
+        LastMetadataRefreshAtUtc = utcNow;
+        NextMetadataRefreshAtUtc = nextRefreshAtUtc;
+        UpdatedAtUtc = utcNow;
+    }
+}
+
+============================================================
+FILE: src\Modules\Catalog\StrmManager.Modules.Catalog.Domain\Seasons\Season.cs
+============================================================
+using StrmManager.Common.Domain.Abstractions;
+
+namespace StrmManager.Modules.Catalog.Domain.Seasons;
+
+public sealed class Season : Entity
+{
+    private Season()
+    {
+    }
+
+    public Guid Id { get; private set; }
+
+    public Guid SeriesId { get; private set; }
+
+    public int Number { get; private set; }
+
+    public DateTime CreatedAtUtc { get; private set; }
+
+    public DateTime UpdatedAtUtc { get; private set; }
+
+    public static Season Create(Guid seriesId, int number, DateTime utcNow) =>
+        new()
+        {
+            Id = Guid.NewGuid(),
+            SeriesId = seriesId,
+            Number = number,
+            CreatedAtUtc = utcNow,
+            UpdatedAtUtc = utcNow,
+        };
+}
+
+============================================================
+FILE: src\Modules\Catalog\StrmManager.Modules.Catalog.Domain\Episodes\Episode.cs
+============================================================
+using StrmManager.Common.Domain.Abstractions;
+using StrmManager.Modules.Catalog.Domain.Shared;
+
+namespace StrmManager.Modules.Catalog.Domain.Episodes;
+
+public sealed class Episode : Entity
+{
+    private Episode()
+    {
+    }
+
+    public Guid Id { get; private set; }
+
+    public Guid SeasonId { get; private set; }
+
+    public string ExternalId { get; private set; } = string.Empty;
+
+    public string Title { get; private set; } = string.Empty;
+
+    public int SeasonNumber { get; private set; }
+
+    public int EpisodeNumber { get; private set; }
+
+    public TimeSpan? Runtime { get; private set; }
+
+    public DateTime ReleaseAtUtc { get; private set; }
+
+    public MediaStatus Status { get; private set; }
+
+    public DateTime? LastAttemptAtUtc { get; private set; }
+
+    public DateTime? NextAttemptAtUtc { get; private set; }
+
+    public int AttemptCount { get; private set; }
+
+    public string? LastError { get; private set; }
+
+    public DateTime CreatedAtUtc { get; private set; }
+
+    public DateTime UpdatedAtUtc { get; private set; }
+
+    public static Episode Schedule(
+        Guid seasonId,
+        string externalId,
+        string title,
+        int seasonNumber,
+        int episodeNumber,
+        TimeSpan? runtime,
+        DateTime releaseAtUtc,
+        DateTime utcNow)
+    {
+        var episode = new Episode
+        {
+            Id = Guid.NewGuid(),
+            SeasonId = seasonId,
+            ExternalId = externalId,
+            Title = title,
+            SeasonNumber = seasonNumber,
+            EpisodeNumber = episodeNumber,
+            Runtime = runtime,
+            ReleaseAtUtc = releaseAtUtc,
+            Status = MediaStatus.Scheduled,
+            AttemptCount = 0,
+            CreatedAtUtc = utcNow,
+            UpdatedAtUtc = utcNow,
+        };
+
+        episode.TryBecomeEligible(utcNow);
+
+        return episode;
+    }
+
+    /// <summary>
+    /// Transitions Scheduled -> Pending once <see cref="ReleaseAtUtc"/> has passed.
+    /// Returns false (no-op) when the episode is not Scheduled or not yet released.
+    /// </summary>
+    public bool TryBecomeEligible(DateTime utcNow)
+    {
+        if (Status != MediaStatus.Scheduled || ReleaseAtUtc > utcNow)
+        {
+            return false;
+        }
+
+        Status = MediaStatus.Pending;
+        UpdatedAtUtc = utcNow;
+        return true;
+    }
+
+    public Result StartSearching(DateTime utcNow)
+    {
+        if (Status != MediaStatus.Pending)
+        {
+            return Result.Failure(MediaErrors.InvalidTransition(nameof(Episode), Status, MediaStatus.Searching));
+        }
+
+        Status = MediaStatus.Searching;
+        UpdatedAtUtc = utcNow;
+        return Result.Success();
+    }
+
+    public Result StartValidating(DateTime utcNow)
+    {
+        if (Status != MediaStatus.Searching)
+        {
+            return Result.Failure(MediaErrors.InvalidTransition(nameof(Episode), Status, MediaStatus.Validating));
+        }
+
+        Status = MediaStatus.Validating;
+        UpdatedAtUtc = utcNow;
+        return Result.Success();
+    }
+
+    public Result MarkCompleted(DateTime utcNow)
+    {
+        if (Status is not (MediaStatus.Validating or MediaStatus.Searching))
+        {
+            return Result.Failure(MediaErrors.InvalidTransition(nameof(Episode), Status, MediaStatus.Completed));
+        }
+
+        Status = MediaStatus.Completed;
+        LastAttemptAtUtc = utcNow;
+        AttemptCount++;
+        NextAttemptAtUtc = null;
+        LastError = null;
+        UpdatedAtUtc = utcNow;
+        return Result.Success();
+    }
+
+    public Result MarkUnavailable(DateTime utcNow, DateTime? nextAttemptAtUtc, string? reason)
+    {
+        if (Status is not (MediaStatus.Searching or MediaStatus.Validating))
+        {
+            return Result.Failure(MediaErrors.InvalidTransition(nameof(Episode), Status, MediaStatus.Unavailable));
+        }
+
+        Status = MediaStatus.Unavailable;
+        LastAttemptAtUtc = utcNow;
+        AttemptCount++;
+        NextAttemptAtUtc = nextAttemptAtUtc;
+        LastError = reason;
+        UpdatedAtUtc = utcNow;
+        return Result.Success();
+    }
+
+    /// <summary>
+    /// <paramref name="nextAttemptAtUtc"/> is the sole retryability signal - a non-null
+    /// value means this failure is eligible for automatic retry (the maintenance worker's
+    /// GetRetryableAsync query picks it up once due), null means it stays Error until a
+    /// manual retry. Always assigned explicitly (never left as whatever the loaded entity
+    /// already had) so a stale value from a prior Unavailable/Error cycle can never leak
+    /// through and make a non-retryable failure look retryable. See ADR-013.
+    /// </summary>
+    public Result MarkError(DateTime utcNow, string error, DateTime? nextAttemptAtUtc = null)
+    {
+        if (Status is MediaStatus.Completed)
+        {
+            return Result.Failure(MediaErrors.InvalidTransition(nameof(Episode), Status, MediaStatus.Error));
+        }
+
+        Status = MediaStatus.Error;
+        LastAttemptAtUtc = utcNow;
+        AttemptCount++;
+        NextAttemptAtUtc = nextAttemptAtUtc;
+        LastError = error;
+        UpdatedAtUtc = utcNow;
+        return Result.Success();
+    }
+
+    /// <summary>
+    /// Recovers an episode left in Searching/Validating by an interrupted processing run
+    /// (crash, restart, cancelled shutdown) back to Pending, so the next maintenance tick
+    /// picks it up again. This is deliberately not the same as MarkUnavailable/MarkError -
+    /// an interrupted run reached no outcome, so AttemptCount/LastError are left
+    /// untouched. See ADR-013.
+    /// </summary>
+    public Result RecoverInterruptedProcessing(DateTime utcNow)
+    {
+        if (Status is not (MediaStatus.Searching or MediaStatus.Validating))
+        {
+            return Result.Failure(MediaErrors.InvalidTransition(nameof(Episode), Status, MediaStatus.Pending));
+        }
+
+        Status = MediaStatus.Pending;
+        UpdatedAtUtc = utcNow;
+        return Result.Success();
+    }
+
+    /// <summary>
+    /// Applies a metadata correction (title/runtime always; ReleaseAtUtc only while
+    /// still Scheduled - once processing has started, the release timestamp is treated
+    /// as historical rather than something a provider refresh should keep rewriting).
+    /// Does not touch Status - callers should follow up with TryBecomeEligible if a
+    /// release date correction may have just made a Scheduled episode due.
+    /// </summary>
+    /// <returns>true if anything actually changed.</returns>
+    public bool UpdateMetadata(string title, TimeSpan? runtime, DateTime releaseAtUtc, DateTime utcNow)
+    {
+        bool changed = false;
+
+        if (Title != title)
+        {
+            Title = title;
+            changed = true;
+        }
+
+        if (Runtime != runtime)
+        {
+            Runtime = runtime;
+            changed = true;
+        }
+
+        if (Status == MediaStatus.Scheduled && ReleaseAtUtc != releaseAtUtc)
+        {
+            ReleaseAtUtc = releaseAtUtc;
+            changed = true;
+        }
+
+        if (changed)
+        {
+            UpdatedAtUtc = utcNow;
+        }
+
+        return changed;
+    }
+
+    public Result Retry(DateTime utcNow)
+    {
+        if (Status is not (MediaStatus.Unavailable or MediaStatus.Error))
+        {
+            return Result.Failure(MediaErrors.InvalidTransition(nameof(Episode), Status, MediaStatus.Pending));
+        }
+
+        Status = MediaStatus.Pending;
+        NextAttemptAtUtc = null;
+        UpdatedAtUtc = utcNow;
+        return Result.Success();
+    }
+}
+
+============================================================
+FILE: src\Modules\Catalog\StrmManager.Modules.Catalog.Domain\Shared\ExternalIds.cs
+============================================================
+namespace StrmManager.Modules.Catalog.Domain.Shared;
+
+public sealed record ExternalIds(string? ImdbId, string? TmdbId, string? TvdbId);
+
+============================================================
+FILE: src\Modules\Catalog\StrmManager.Modules.Catalog.Application\Metadata\IMetadataProvider.cs
+============================================================
+using StrmManager.Common.Domain.Abstractions;
+
+namespace StrmManager.Modules.Catalog.Application.Metadata;
+
+/// <summary>
+/// A source of series metadata, keyed by a stable external id (e.g. an IMDb id).
+/// Implemented in Infrastructure (CinemetaMetadataProvider today); Domain and the rest
+/// of Application know nothing about which provider backs this.
+/// </summary>
+public interface IMetadataProvider
+{
+    Task<Result<SeriesMetadata>> GetSeriesAsync(string externalId, CancellationToken cancellationToken = default);
+}
+
+============================================================
+FILE: src\Modules\Catalog\StrmManager.Modules.Catalog.Application\Metadata\SeriesMetadata.cs
+============================================================
+using StrmManager.Modules.Catalog.Domain.Series;
+using StrmManager.Modules.Catalog.Domain.Shared;
+
+namespace StrmManager.Modules.Catalog.Application.Metadata;
+
+/// <summary>
+/// Provider-neutral series metadata - what CatalogSynchronizer needs, not everything a
+/// given provider's API happens to return. Provider-specific DTOs never cross this
+/// boundary (see IMetadataProvider).
+/// </summary>
+public sealed record SeriesMetadata(
+    ExternalIds ExternalIds,
+    string Title,
+    string? OriginalTitle,
+    int Year,
+    SeriesStatus Status,
+    IReadOnlyList<EpisodeMetadata> Episodes);
+
+============================================================
+FILE: src\Modules\Catalog\StrmManager.Modules.Catalog.Application\Metadata\EpisodeMetadata.cs
+============================================================
+namespace StrmManager.Modules.Catalog.Application.Metadata;
+
+/// <summary>
+/// Provider-neutral episode metadata. ReleaseAtUtc is nullable because a provider can
+/// legitimately have no reliable release date for an episode yet - callers must not
+/// invent one (see CatalogSynchronizer, which skips episodes without a release date
+/// rather than defaulting to "now").
+/// </summary>
+public sealed record EpisodeMetadata(
+    string ExternalId,
+    string Title,
+    int SeasonNumber,
+    int EpisodeNumber,
+    TimeSpan? Runtime,
+    DateTime? ReleaseAtUtc);
+
+============================================================
+FILE: src\Modules\Catalog\StrmManager.Modules.Catalog.Application\Metadata\CatalogSynchronizer.cs
+============================================================
+using Microsoft.Extensions.Logging;
+using StrmManager.Modules.Catalog.Domain.Episodes;
+using StrmManager.Modules.Catalog.Domain.Seasons;
+
+namespace StrmManager.Modules.Catalog.Application.Metadata;
+
+/// <summary>
+/// Synchronizes a series' seasons/episodes against freshly retrieved provider metadata.
+/// Shared by AddSeriesCommandHandler (first sync) and RefreshSeriesMetadataCommandHandler
+/// (subsequent syncs) so the idempotency/matching/status-preservation rules live in one
+/// place. Does not call IUnitOfWork.SaveChangesAsync - callers own the transaction
+/// boundary (see ADR-007).
+/// </summary>
+public sealed partial class CatalogSynchronizer(
+    ISeasonRepository seasonRepository,
+    IEpisodeRepository episodeRepository,
+    ILogger<CatalogSynchronizer> logger)
+{
+    public async Task<CatalogSynchronizationResult> SynchronizeAsync(
+        Guid seriesId,
+        IReadOnlyList<EpisodeMetadata> episodes,
+        DateTime utcNow,
+        CancellationToken cancellationToken)
+    {
+        int seasonsAdded = 0;
+        int episodesAdded = 0;
+        int episodesUpdated = 0;
+        int episodesSkipped = 0;
+
+        IEnumerable<IGrouping<int, EpisodeMetadata>> seasonGroups = episodes
+            .Where(episode => episode.SeasonNumber >= 0)
+            .GroupBy(episode => episode.SeasonNumber)
+            .OrderBy(group => group.Key);
+
+        foreach (IGrouping<int, EpisodeMetadata> seasonGroup in seasonGroups)
+        {
+            Season? season = await seasonRepository.GetBySeriesAndNumberAsync(seriesId, seasonGroup.Key, cancellationToken);
+            bool seasonIsNew = season is null;
+
+            if (season is null)
+            {
+                season = Season.Create(seriesId, seasonGroup.Key, utcNow);
+                seasonRepository.Insert(season);
+                seasonsAdded++;
+            }
+
+            IReadOnlyList<Episode> existingEpisodes = seasonIsNew
+                ? []
+                : await episodeRepository.GetBySeasonAsync(season.Id, cancellationToken);
+
+            Dictionary<string, Episode> existingByExternalId = existingEpisodes
+                .GroupBy(episode => episode.ExternalId)
+                .ToDictionary(group => group.Key, group => group.First());
+            Dictionary<int, Episode> existingByNumber = existingEpisodes
+                .GroupBy(episode => episode.EpisodeNumber)
+                .ToDictionary(group => group.Key, group => group.First());
+
+            foreach (EpisodeMetadata episodeMetadata in seasonGroup)
+            {
+                if (episodeMetadata.ReleaseAtUtc is not { } releaseAtUtc)
+                {
+                    episodesSkipped++;
+                    LogEpisodeSkippedNoReleaseDate(logger, episodeMetadata.ExternalId);
+                    continue;
+                }
+
+                // Prefer the stable external id; fall back to (season, episode number)
+                // for the rare case a provider changed an episode's external id between
+                // syncs. Never match by title - titles can change.
+                Episode? existing = existingByExternalId.GetValueOrDefault(episodeMetadata.ExternalId)
+                    ?? existingByNumber.GetValueOrDefault(episodeMetadata.EpisodeNumber);
+
+                if (existing is null)
+                {
+                    Episode episode = Episode.Schedule(
+                        season.Id,
+                        episodeMetadata.ExternalId,
+                        episodeMetadata.Title,
+                        seasonGroup.Key,
+                        episodeMetadata.EpisodeNumber,
+                        episodeMetadata.Runtime,
+                        releaseAtUtc,
+                        utcNow);
+
+                    episodeRepository.Insert(episode);
+                    episodesAdded++;
+                }
+                else
+                {
+                    bool changed = existing.UpdateMetadata(episodeMetadata.Title, episodeMetadata.Runtime, releaseAtUtc, utcNow);
+
+                    // A release-date correction may have just made a still-Scheduled
+                    // episode due - re-evaluate through the domain, never bypass it.
+                    existing.TryBecomeEligible(utcNow);
+
+                    if (changed)
+                    {
+                        episodesUpdated++;
+                    }
+                }
+            }
+        }
+
+        return new CatalogSynchronizationResult(seasonsAdded, episodesAdded, episodesUpdated, episodesSkipped);
+    }
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Skipped episode {ExternalId} - provider did not return a release date")]
+    private static partial void LogEpisodeSkippedNoReleaseDate(ILogger logger, string externalId);
+}
+
+============================================================
+FILE: src\Modules\Catalog\StrmManager.Modules.Catalog.Infrastructure\Metadata\Cinemeta\CinemetaMetadataProvider.cs
+============================================================
+using System.Diagnostics;
+using System.Net;
+using System.Net.Http.Json;
+using System.Text.Json;
+using Microsoft.Extensions.Logging;
+using Polly.Timeout;
+using StrmManager.Common.Domain.Abstractions;
+using StrmManager.Modules.Catalog.Application.Metadata;
+
+namespace StrmManager.Modules.Catalog.Infrastructure.Metadata.Cinemeta;
+
+internal sealed partial class CinemetaMetadataProvider(HttpClient httpClient, ILogger<CinemetaMetadataProvider> logger)
+    : IMetadataProvider
+{
+    private const string ProviderName = "Cinemeta";
+
+    private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
+
+    public async Task<Result<SeriesMetadata>> GetSeriesAsync(string externalId, CancellationToken cancellationToken = default)
+    {
+        Stopwatch stopwatch = Stopwatch.StartNew();
+
+        try
+        {
+            using HttpResponseMessage response = await httpClient.GetAsync(
+                $"meta/series/{Uri.EscapeDataString(externalId)}.json",
+                cancellationToken);
+
+            if (response.StatusCode == HttpStatusCode.NotFound)
+            {
+                LogSeriesNotFound(logger, externalId, stopwatch.ElapsedMilliseconds);
+                return Result.Failure<SeriesMetadata>(MetadataProviderErrors.SeriesNotFound(ProviderName, externalId));
+            }
+
+            if (!response.IsSuccessStatusCode)
+            {
+                LogUnexpectedStatus(logger, externalId, (int)response.StatusCode, stopwatch.ElapsedMilliseconds);
+                return Result.Failure<SeriesMetadata>(MetadataProviderErrors.ProviderUnavailable(ProviderName));
+            }
+
+            CinemetaSeriesResponseDto? payload = await response.Content.ReadFromJsonAsync<CinemetaSeriesResponseDto>(
+                SerializerOptions,
+                cancellationToken);
+
+            if (payload?.Meta is null)
+            {
+                LogInvalidResponse(logger, externalId, "missing meta object");
+                return Result.Failure<SeriesMetadata>(MetadataProviderErrors.InvalidResponse(ProviderName, "missing meta object"));
+            }
+
+            Result<SeriesMetadata> result = CinemetaMetadataMapper.Map(payload.Meta);
+
+            if (result.IsSuccess)
+            {
+                LogSeriesRetrieved(logger, externalId, result.Value.Episodes.Count, stopwatch.ElapsedMilliseconds);
+            }
+            else
+            {
+                LogInvalidResponse(logger, externalId, result.Error.Description);
+            }
+
+            return result;
+        }
+        catch (TimeoutRejectedException)
+        {
+            LogTimeout(logger, externalId, stopwatch.ElapsedMilliseconds);
+            return Result.Failure<SeriesMetadata>(MetadataProviderErrors.Timeout(ProviderName));
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            LogTimeout(logger, externalId, stopwatch.ElapsedMilliseconds);
+            return Result.Failure<SeriesMetadata>(MetadataProviderErrors.Timeout(ProviderName));
+        }
+        catch (HttpRequestException exception)
+        {
+            LogProviderUnreachable(logger, externalId, exception.Message);
+            return Result.Failure<SeriesMetadata>(MetadataProviderErrors.ProviderUnavailable(ProviderName));
+        }
+        catch (JsonException exception)
+        {
+            LogInvalidResponse(logger, externalId, exception.Message);
+            return Result.Failure<SeriesMetadata>(MetadataProviderErrors.InvalidResponse(ProviderName, "malformed JSON"));
+        }
+    }
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Retrieved {EpisodeCount} episodes for {ExternalId} from Cinemeta in {ElapsedMs}ms")]
+    private static partial void LogSeriesRetrieved(ILogger logger, string externalId, int episodeCount, long elapsedMs);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Cinemeta has no metadata for {ExternalId} ({ElapsedMs}ms)")]
+    private static partial void LogSeriesNotFound(ILogger logger, string externalId, long elapsedMs);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Cinemeta returned status {StatusCode} for {ExternalId} ({ElapsedMs}ms)")]
+    private static partial void LogUnexpectedStatus(ILogger logger, string externalId, int statusCode, long elapsedMs);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Cinemeta request for {ExternalId} timed out after {ElapsedMs}ms")]
+    private static partial void LogTimeout(ILogger logger, string externalId, long elapsedMs);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Cinemeta request for {ExternalId} failed: {Reason}")]
+    private static partial void LogProviderUnreachable(ILogger logger, string externalId, string reason);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Cinemeta returned an invalid response for {ExternalId}: {Reason}")]
+    private static partial void LogInvalidResponse(ILogger logger, string externalId, string reason);
+}
+
+============================================================
+FILE: src\Modules\Catalog\StrmManager.Modules.Catalog.Infrastructure\Metadata\Cinemeta\CinemetaMetadataMapper.cs
+============================================================
+using System.Globalization;
+using System.Text.RegularExpressions;
+using StrmManager.Common.Domain.Abstractions;
+using StrmManager.Modules.Catalog.Application.Metadata;
+using StrmManager.Modules.Catalog.Domain.Series;
+using StrmManager.Modules.Catalog.Domain.Shared;
+
+namespace StrmManager.Modules.Catalog.Infrastructure.Metadata.Cinemeta;
+
+/// <summary>
+/// Converts the raw Cinemeta DTO into provider-neutral SeriesMetadata. Deliberately maps
+/// only the fields Catalog synchronization currently uses (see ADR-007) - not Cinemeta's
+/// full schema.
+/// </summary>
+internal static partial class CinemetaMetadataMapper
+{
+    private const string ProviderName = "Cinemeta";
+
+    public static Result<SeriesMetadata> Map(CinemetaMetaDto meta)
+    {
+        if (string.IsNullOrWhiteSpace(meta.Name))
+        {
+            return Result.Failure<SeriesMetadata>(MetadataProviderErrors.InvalidResponse(ProviderName, "missing series name"));
+        }
+
+        if (!TryParseYear(meta.ReleaseInfo, out int year))
+        {
+            return Result.Failure<SeriesMetadata>(MetadataProviderErrors.InvalidResponse(ProviderName, "missing or invalid release year"));
+        }
+
+        SeriesStatus status = MapStatus(meta.Status);
+        TimeSpan? runtime = ParseRuntimeMinutes(meta.Runtime);
+
+        List<EpisodeMetadata> episodes = (meta.Videos ?? [])
+            .Select(video => MapEpisode(video, runtime))
+            .Where(episode => episode is not null)
+            .Select(episode => episode!)
+            .ToList();
+
+        var externalIds = new ExternalIds(meta.Id, null, null);
+
+        return new SeriesMetadata(externalIds, meta.Name, null, year, status, episodes);
+    }
+
+    private static EpisodeMetadata? MapEpisode(CinemetaVideoDto video, TimeSpan? seriesRuntime)
+    {
+        // Season 0 (specials) is preserved by design - see ADR-007. We only need a
+        // non-negative season number and a usable episode number/id to synchronize.
+        if (video.Season is not { } seasonNumber || seasonNumber < 0)
+        {
+            return null;
+        }
+
+        int? episodeNumber = video.Number ?? video.Episode;
+
+        if (episodeNumber is not { } number || number <= 0)
+        {
+            return null;
+        }
+
+        if (string.IsNullOrWhiteSpace(video.Id))
+        {
+            return null;
+        }
+
+        // firstAired preferred over released per ADR-007; neither present -> null,
+        // never invented (CatalogSynchronizer skips episodes with no release date).
+        DateTime? releaseAtUtc = TryParseUtc(video.FirstAired, out DateTime firstAired)
+            ? firstAired
+            : TryParseUtc(video.Released, out DateTime released)
+                ? released
+                : null;
+
+        string title = string.IsNullOrWhiteSpace(video.Title)
+            ? $"Episode {number}"
+            : video.Title;
+
+        return new EpisodeMetadata(video.Id, title, seasonNumber, number, seriesRuntime, releaseAtUtc);
+    }
+
+    private static bool TryParseUtc(string? value, out DateTime utc)
+    {
+        if (!string.IsNullOrWhiteSpace(value) &&
+            DateTime.TryParse(
+                value,
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal,
+                out DateTime parsed))
+        {
+            utc = DateTime.SpecifyKind(parsed, DateTimeKind.Utc);
+            return true;
+        }
+
+        utc = default;
+        return false;
+    }
+
+    private static bool TryParseYear(string? releaseInfo, out int year)
+    {
+        if (!string.IsNullOrWhiteSpace(releaseInfo))
+        {
+            Match match = YearRegex().Match(releaseInfo);
+
+            if (match.Success && int.TryParse(match.Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out year))
+            {
+                return true;
+            }
+        }
+
+        year = 0;
+        return false;
+    }
+
+    private static SeriesStatus MapStatus(string? status) => status?.Trim().ToUpperInvariant() switch
+    {
+        "ENDED" => SeriesStatus.Ended,
+        "CONTINUING" => SeriesStatus.Active,
+        // Missing/unrecognized status must not fail synchronization - conservative
+        // "assume still airing" default, per ADR-007.
+        _ => SeriesStatus.Active,
+    };
+
+    private static TimeSpan? ParseRuntimeMinutes(string? runtime)
+    {
+        if (string.IsNullOrWhiteSpace(runtime))
+        {
+            return null;
+        }
+
+        Match match = RuntimeMinutesRegex().Match(runtime);
+
+        return match.Success && int.TryParse(match.Groups[1].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int minutes)
+            ? TimeSpan.FromMinutes(minutes)
+            : null;
+    }
+
+    [GeneratedRegex(@"\d{4}")]
+    private static partial Regex YearRegex();
+
+    [GeneratedRegex(@"(\d+)\s*min")]
+    private static partial Regex RuntimeMinutesRegex();
+}
+
+============================================================
+FILE: src\Modules\Catalog\StrmManager.Modules.Catalog.Infrastructure\Metadata\Cinemeta\CinemetaSeriesResponseDto.cs
+============================================================
+namespace StrmManager.Modules.Catalog.Infrastructure.Metadata.Cinemeta;
+
+/// <summary>
+/// Raw Cinemeta/Stremio addon response shape (GET /meta/series/{imdbId}.json). Never
+/// exposed outside Infrastructure - CinemetaMetadataMapper converts this into the
+/// provider-neutral StrmManager.Modules.Catalog.Application.Metadata.SeriesMetadata.
+/// </summary>
+internal sealed class CinemetaSeriesResponseDto
+{
+    public CinemetaMetaDto? Meta { get; set; }
+}
+
+internal sealed class CinemetaMetaDto
+{
+    public string? Id { get; set; }
+
+    public string? Name { get; set; }
+
+    /// <summary>e.g. "2026-" (ongoing) or "2020-2023" (ended).</summary>
+    public string? ReleaseInfo { get; set; }
+
+    /// <summary>e.g. "20 min". Free-form and not always present.</summary>
+    public string? Runtime { get; set; }
+
+    /// <summary>e.g. "Continuing", "Ended". Not a closed/reliable enum on Cinemeta's side.</summary>
+    public string? Status { get; set; }
+
+    public List<CinemetaVideoDto>? Videos { get; set; }
+}
+
+internal sealed class CinemetaVideoDto
+{
+    public string? Id { get; set; }
+
+    public string? Title { get; set; }
+
+    public int? Season { get; set; }
+
+    /// <summary>Primary episode-number field per the Stremio addon protocol.</summary>
+    public int? Number { get; set; }
+
+    /// <summary>Sometimes present alongside Number with the same value - fallback only.</summary>
+    public int? Episode { get; set; }
+
+    public string? FirstAired { get; set; }
+
+    public string? Released { get; set; }
+}
+
+============================================================
+FILE: src\Modules\Catalog\StrmManager.Modules.Catalog.Application\Episodes\ProcessEpisode\ProcessEpisodeCommandHandler.cs
+============================================================
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using StrmManager.Common.Application.Messaging;
+using StrmManager.Common.Domain.Abstractions;
+using StrmManager.Modules.Catalog.Application.Abstractions.Data;
+using StrmManager.Modules.Catalog.Application.Processing;
+using StrmManager.Modules.Catalog.Domain.Episodes;
+using StrmManager.Modules.Catalog.Domain.Seasons;
+using StrmManager.Modules.Catalog.Domain.Shared;
+using StrmManager.Modules.Catalog.Domain.SourceAttempts;
+using StrmManager.Modules.Catalog.Domain.StrmFiles;
+using StrmManager.Modules.MediaProcessing.Application.StrmGeneration;
+using StrmManager.Modules.MediaProcessing.Application.Streams;
+using StrmManager.Modules.MediaProcessing.Application.Streams.EpisodeIdentity;
+using StrmManager.Modules.MediaProcessing.Application.Validation;
+using ISeriesRepository = StrmManager.Modules.Catalog.Domain.Series.ISeriesRepository;
+using SeriesEntity = StrmManager.Modules.Catalog.Domain.Series.Series;
+
+namespace StrmManager.Modules.Catalog.Application.Episodes.ProcessEpisode;
+
+/// <summary>
+/// Single-episode processing pipeline, called both by POST /api/episodes/{id}/process
+/// and by Scheduling's EpisodeProcessingWorker (see ADR-013) - there is exactly one
+/// pipeline, never a duplicated one. StartSearching is persisted immediately (the
+/// "claim") before any slow external work begins, using UpdatedAtUtc as an optimistic-
+/// concurrency token so a second, overlapping claim of the same episode fails cleanly
+/// instead of both callers processing it. StartValidating is persisted too, primarily so
+/// a crashed/stuck run is diagnosable and recoverable by the maintenance worker's
+/// stale-processing sweep. This supersedes ADR-011's "never persist Searching/Validating"
+/// design - see ADR-013 for why Phase 4's claim requirement changed that calculus.
+/// </summary>
+internal sealed partial class ProcessEpisodeCommandHandler(
+    IEpisodeRepository episodeRepository,
+    ISeasonRepository seasonRepository,
+    ISeriesRepository seriesRepository,
+    ISourceAttemptRepository sourceAttemptRepository,
+    IStrmFileRepository strmFileRepository,
+    IStreamProvider streamProvider,
+    IMediaValidator mediaValidator,
+    IStrmWriter strmWriter,
+    IUnitOfWork unitOfWork,
+    IOptions<ProcessingOptions> processingOptions,
+    TimeProvider timeProvider,
+    ILogger<ProcessEpisodeCommandHandler> logger)
+    : ICommandHandler<ProcessEpisodeCommand, ProcessEpisodeResult>
+{
+    public async Task<Result<ProcessEpisodeResult>> Handle(ProcessEpisodeCommand command, CancellationToken cancellationToken)
+    {
+        Episode? episode = await episodeRepository.GetAsync(command.EpisodeId, cancellationToken);
+
+        if (episode is null)
+        {
+            return Result.Failure<ProcessEpisodeResult>(EpisodeErrors.NotFound(command.EpisodeId));
+        }
+
+        if (episode.Status == MediaStatus.Completed)
+        {
+            StrmFile? alreadyWrittenStrmFile = await strmFileRepository.GetForEpisodeAsync(episode.Id, cancellationToken);
+
+            return new ProcessEpisodeResult(
+                episode.Id, MediaStatus.Completed.ToString(), episode.AttemptCount, null,
+                alreadyWrittenStrmFile?.Path, "Episode is already Completed - not reprocessed.");
+        }
+
+        Result startSearchingResult = episode.StartSearching(timeProvider.GetUtcNow().UtcDateTime);
+
+        if (startSearchingResult.IsFailure)
+        {
+            return Result.Failure<ProcessEpisodeResult>(startSearchingResult.Error);
+        }
+
+        // Persist the claim now, before any slow external work - a concurrency conflict
+        // here means another request already claimed this episode between our load and
+        // this save (see EpisodeConfiguration's UpdatedAtUtc concurrency token / ADR-013).
+        bool claimed = await unitOfWork.TrySaveChangesAsync(cancellationToken);
+
+        if (!claimed)
+        {
+            LogClaimConflict(logger, episode.Id);
+            return Result.Failure<ProcessEpisodeResult>(EpisodeErrors.AlreadyBeingProcessed(episode.Id));
+        }
+
+        (Season Season, SeriesEntity Series)? catalogContext = await LoadCatalogContextAsync(episode, cancellationToken);
+
+        if (catalogContext is null)
+        {
+            return await FinishAsError(episode, "Season or Series record is missing for this episode.", isRetryable: false, cancellationToken);
+        }
+
+        var streamReference = new EpisodeStreamReference(episode.ExternalId, episode.SeasonNumber, episode.EpisodeNumber, episode.Title, episode.Runtime);
+        Result<IReadOnlyList<StreamCandidate>> streamsResult = await streamProvider.GetEpisodeStreamsAsync(streamReference, cancellationToken);
+
+        if (streamsResult.IsFailure)
+        {
+            LogProviderFailure(logger, episode.Id, streamsResult.Error.Code);
+            // Stream-provider failures (unavailable/timeout/invalid response) are always
+            // transient/technical, never a permanent condition about this episode -
+            // eligible for automatic retry (see ADR-013).
+            return await FinishAsError(episode, streamsResult.Error.Description, isRetryable: true, cancellationToken);
+        }
+
+        IReadOnlyList<StreamCandidate> candidates = streamsResult.Value;
+
+        if (candidates.Count == 0)
+        {
+            return await FinishAsUnavailable(episode, "The stream provider returned no candidates.", cancellationToken);
+        }
+
+        episode.StartValidating(timeProvider.GetUtcNow().UtcDateTime);
+
+        // No concurrency risk here - a second claimant could only exist if it had won
+        // the earlier claim-save instead of this run, which is mutually exclusive.
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+
+        int attemptsThisRun = 0;
+        StreamCandidate? approvedCandidate = null;
+
+        foreach (StreamCandidate candidate in candidates)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            string candidateText = $"{candidate.Name} {candidate.Description}";
+            EpisodeIdentityMatch identityMatch = EpisodeIdentityValidator.Evaluate(candidateText, episode.SeasonNumber, episode.EpisodeNumber);
+
+            if (identityMatch != EpisodeIdentityMatch.Compatible)
+            {
+                string reason = identityMatch == EpisodeIdentityMatch.Conflicting
+                    ? "Candidate references a different episode."
+                    : "Could not confirm the candidate's episode identity.";
+
+                RecordAttempt(episode.Id, candidate, SourceAttemptResult.Rejected, null, episode.Runtime, null, null, null, reason);
+                attemptsThisRun++;
+                continue;
+            }
+
+            var validationReference = new MediaValidationReference(episode.Runtime);
+            MediaValidationResult validationResult = await mediaValidator.ValidateAsync(candidate, validationReference, cancellationToken);
+
+            RecordAttempt(
+                episode.Id, candidate, validationResult.Result, validationResult.Duration, validationResult.ExpectedDuration,
+                validationResult.DifferencePercentage, validationResult.VideoCodec, validationResult.AudioCodec, validationResult.FailureReason);
+            attemptsThisRun++;
+
+            LogCandidateAttempt(logger, episode.Id, candidate.Name, attemptsThisRun, validationResult.Result);
+
+            if (validationResult.Approved)
+            {
+                approvedCandidate = candidate;
+                break;
+            }
+        }
+
+        if (approvedCandidate is null)
+        {
+            return await FinishAsUnavailable(episode, "No candidate passed identity/media validation.", cancellationToken, attemptsThisRun);
+        }
+
+        var strmReference = new EpisodeStrmReference(
+            catalogContext.Value.Series.Title, catalogContext.Value.Series.Year, episode.SeasonNumber, episode.EpisodeNumber);
+
+        Result<string> writeResult = await strmWriter.WriteEpisodeAsync(strmReference, approvedCandidate.Url, cancellationToken);
+
+        if (writeResult.IsFailure)
+        {
+            // Filesystem/path failures (traversal rejection, permission, disk) are
+            // treated as potentially persistent configuration problems, not hammered
+            // automatically - see ADR-013.
+            return await FinishAsError(episode, $"Failed to write .strm file: {writeResult.Error.Description}", isRetryable: false, cancellationToken, attemptsThisRun);
+        }
+
+        StrmFile? existingStrmFile = await strmFileRepository.GetForEpisodeAsync(episode.Id, cancellationToken);
+        DateTime utcNow = timeProvider.GetUtcNow().UtcDateTime;
+
+        if (existingStrmFile is null)
+        {
+            strmFileRepository.Insert(StrmFile.ForEpisode(episode.Id, writeResult.Value, utcNow));
+        }
+        else
+        {
+            existingStrmFile.Overwrite(writeResult.Value, utcNow);
+        }
+
+        episode.MarkCompleted(utcNow);
+
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+
+        LogEpisodeCompleted(logger, episode.Id, attemptsThisRun);
+
+        return new ProcessEpisodeResult(
+            episode.Id, MediaStatus.Completed.ToString(), attemptsThisRun,
+            new SelectedSourceSummary(approvedCandidate.Provider, approvedCandidate.Name), writeResult.Value, null);
+    }
+
+    private async Task<(Season Season, SeriesEntity Series)?> LoadCatalogContextAsync(Episode episode, CancellationToken cancellationToken)
+    {
+        Season? season = await seasonRepository.GetAsync(episode.SeasonId, cancellationToken);
+
+        if (season is null)
+        {
+            return null;
+        }
+
+        SeriesEntity? series = await seriesRepository.GetAsync(season.SeriesId, cancellationToken);
+
+        return series is null ? null : (season, series);
+    }
+
+    private void RecordAttempt(
+        Guid episodeId,
+        StreamCandidate candidate,
+        SourceAttemptResult result,
+        TimeSpan? duration,
+        TimeSpan? expectedDuration,
+        double? differencePercentage,
+        string? videoCodec,
+        string? audioCodec,
+        string? failureReason)
+    {
+        SourceAttempt attempt = SourceAttempt.ForEpisode(
+            episodeId, candidate.Provider, candidate.Name, timeProvider.GetUtcNow().UtcDateTime, result,
+            duration, expectedDuration, differencePercentage, videoCodec, audioCodec, failureReason);
+
+        sourceAttemptRepository.Insert(attempt);
+    }
+
+    private async Task<Result<ProcessEpisodeResult>> FinishAsUnavailable(
+        Episode episode, string reason, CancellationToken cancellationToken, int attempts = 0)
+    {
+        DateTime utcNow = timeProvider.GetUtcNow().UtcDateTime;
+        DateTime nextAttemptAtUtc = utcNow.Add(processingOptions.Value.UnavailableRetryDelay);
+
+        episode.MarkUnavailable(utcNow, nextAttemptAtUtc, reason);
+
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+
+        LogEpisodeUnavailable(logger, episode.Id, reason);
+
+        return new ProcessEpisodeResult(episode.Id, MediaStatus.Unavailable.ToString(), attempts, null, null, reason);
+    }
+
+    private async Task<Result<ProcessEpisodeResult>> FinishAsError(
+        Episode episode, string reason, bool isRetryable, CancellationToken cancellationToken, int attempts = 0)
+    {
+        DateTime utcNow = timeProvider.GetUtcNow().UtcDateTime;
+        DateTime? nextAttemptAtUtc = isRetryable ? utcNow.Add(processingOptions.Value.RetryableErrorDelay) : null;
+
+        episode.MarkError(utcNow, reason, nextAttemptAtUtc);
+
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+
+        LogEpisodeError(logger, episode.Id, reason);
+
+        return new ProcessEpisodeResult(episode.Id, MediaStatus.Error.ToString(), attempts, null, null, reason);
+    }
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Episode {EpisodeId} is already being processed by another request - claim rejected")]
+    private static partial void LogClaimConflict(ILogger logger, Guid episodeId);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Stream provider failed for episode {EpisodeId}: {ErrorCode}")]
+    private static partial void LogProviderFailure(ILogger logger, Guid episodeId, string errorCode);
+
+    [LoggerMessage(Level = LogLevel.Debug, Message = "Episode {EpisodeId}: candidate '{CandidateName}' attempt #{AttemptNumber} -> {Result}")]
+    private static partial void LogCandidateAttempt(ILogger logger, Guid episodeId, string candidateName, int attemptNumber, SourceAttemptResult result);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Episode {EpisodeId} completed after {Attempts} attempt(s)")]
+    private static partial void LogEpisodeCompleted(ILogger logger, Guid episodeId, int attempts);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Episode {EpisodeId} marked Unavailable: {Reason}")]
+    private static partial void LogEpisodeUnavailable(ILogger logger, Guid episodeId, string reason);
+
+    [LoggerMessage(Level = LogLevel.Error, Message = "Episode {EpisodeId} marked Error: {Reason}")]
+    private static partial void LogEpisodeError(ILogger logger, Guid episodeId, string reason);
+}
+
+============================================================
+FILE: src\Modules\MediaProcessing\StrmManager.Modules.MediaProcessing.Application\Streams\IStreamProvider.cs
+============================================================
+using StrmManager.Common.Domain.Abstractions;
+
+namespace StrmManager.Modules.MediaProcessing.Application.Streams;
+
+public interface IStreamProvider
+{
+    /// <summary>
+    /// An empty (but successful) list is a normal outcome - the provider simply has no
+    /// candidates for this episode right now. Only genuine technical failures (HTTP
+    /// failure after resilience is exhausted, malformed response, timeout) are a
+    /// Result.Failure - see StreamProviderErrors.
+    /// </summary>
+    Task<Result<IReadOnlyList<StreamCandidate>>> GetEpisodeStreamsAsync(
+        EpisodeStreamReference reference,
+        CancellationToken cancellationToken = default);
+}
+
+============================================================
+FILE: src\Modules\MediaProcessing\StrmManager.Modules.MediaProcessing.Application\Streams\EpisodeStreamReference.cs
+============================================================
+namespace StrmManager.Modules.MediaProcessing.Application.Streams;
+
+/// <summary>
+/// The minimum episode data a stream provider needs - never the full Catalog Episode
+/// entity. Keeps MediaProcessing.Application ignorant of Catalog.Domain's Episode type.
+/// </summary>
+public sealed record EpisodeStreamReference(
+    string ExternalId,
+    int SeasonNumber,
+    int EpisodeNumber,
+    string Title,
+    TimeSpan? ExpectedRuntime);
+
+============================================================
+FILE: src\Modules\MediaProcessing\StrmManager.Modules.MediaProcessing.Application\Streams\EpisodeIdentity\EpisodeIdentityValidator.cs
+============================================================
+using System.Text.RegularExpressions;
+
+namespace StrmManager.Modules.MediaProcessing.Application.Streams.EpisodeIdentity;
+
+/// <summary>
+/// Ports the legacy PowerShell prototype's episode-identity safety check: a candidate's
+/// name/title is scanned for "T01Â·E05"/"S01E05"/"T1 E5"/"S1-E5"-style references and
+/// compared against the expected episode. Conservative by design - a candidate with no
+/// detectable reference is treated the same as one with a conflicting reference
+/// (rejected), matching the legacy behavior of never accepting a source whose episode
+/// identity could not be positively confirmed.
+/// </summary>
+public static partial class EpisodeIdentityValidator
+{
+    public static EpisodeIdentityMatch Evaluate(string candidateText, int expectedSeasonNumber, int expectedEpisodeNumber)
+    {
+        MatchCollection matches = EpisodeReferencePattern().Matches(candidateText);
+
+        if (matches.Count == 0)
+        {
+            return EpisodeIdentityMatch.Undetermined;
+        }
+
+        bool anyMatchesExpected = false;
+        bool anyConflicts = false;
+
+        foreach (Match match in matches)
+        {
+            int season = int.Parse(match.Groups[1].Value);
+            int episode = int.Parse(match.Groups[2].Value);
+
+            if (season == expectedSeasonNumber && episode == expectedEpisodeNumber)
+            {
+                anyMatchesExpected = true;
+            }
+            else
+            {
+                anyConflicts = true;
+            }
+        }
+
+        if (anyConflicts)
+        {
+            return EpisodeIdentityMatch.Conflicting;
+        }
+
+        return anyMatchesExpected ? EpisodeIdentityMatch.Compatible : EpisodeIdentityMatch.Undetermined;
+    }
+
+    [GeneratedRegex(@"(?:T|S)\s*(\d{1,2})\s*[Â·.\- ]?\s*E\s*(\d{1,3})", RegexOptions.IgnoreCase)]
+    private static partial Regex EpisodeReferencePattern();
+}
+
+============================================================
+FILE: src\Modules\MediaProcessing\StrmManager.Modules.MediaProcessing.Application\StrmGeneration\IStrmWriter.cs
+============================================================
+using StrmManager.Common.Domain.Abstractions;
+
+namespace StrmManager.Modules.MediaProcessing.Application.StrmGeneration;
+
+public interface IStrmWriter
+{
+    /// <summary>Returns the absolute path written on success. sourceUrl is written as the file's content, never returned/logged.</summary>
+    Task<Result<string>> WriteEpisodeAsync(
+        EpisodeStrmReference reference,
+        string sourceUrl,
+        CancellationToken cancellationToken = default);
+}
+
+============================================================
+FILE: src\Modules\MediaProcessing\StrmManager.Modules.MediaProcessing.Application\StrmGeneration\EpisodeStrmReference.cs
+============================================================
+namespace StrmManager.Modules.MediaProcessing.Application.StrmGeneration;
+
+/// <summary>
+/// The catalog data needed to compute a Jellyfin-compatible .strm path - not an external
+/// provider concern, but kept as a neutral DTO for the same reason as the other
+/// MediaProcessing contracts: IStrmWriter shouldn't need to know about Catalog.Domain's
+/// Episode/Series entities.
+/// </summary>
+public sealed record EpisodeStrmReference(string SeriesTitle, int SeriesYear, int SeasonNumber, int EpisodeNumber);
+
+============================================================
+FILE: src\Modules\Catalog\StrmManager.Modules.Catalog.Infrastructure\Database\CatalogDbContext.cs
+============================================================
+using Microsoft.EntityFrameworkCore;
+using StrmManager.Modules.Catalog.Application.Abstractions.Data;
+using StrmManager.Modules.Catalog.Domain.Episodes;
+using StrmManager.Modules.Catalog.Domain.Movies;
+using StrmManager.Modules.Catalog.Domain.Seasons;
+using StrmManager.Modules.Catalog.Domain.SourceAttempts;
+using StrmManager.Modules.Catalog.Domain.StrmFiles;
+using SeriesEntity = StrmManager.Modules.Catalog.Domain.Series.Series;
+
+namespace StrmManager.Modules.Catalog.Infrastructure.Database;
+
+public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
+    : DbContext(options), IUnitOfWork
+{
+    internal DbSet<SeriesEntity> Series { get; set; } = null!;
+
+    internal DbSet<Season> Seasons { get; set; } = null!;
+
+    internal DbSet<Episode> Episodes { get; set; } = null!;
+
+    internal DbSet<Movie> Movies { get; set; } = null!;
+
+    internal DbSet<SourceAttempt> SourceAttempts { get; set; } = null!;
+
+    internal DbSet<StrmFile> StrmFiles { get; set; } = null!;
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.ApplyConfigurationsFromAssembly(typeof(CatalogDbContext).Assembly);
+    }
+
+    public async Task<bool> TrySaveChangesAsync(CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            await SaveChangesAsync(cancellationToken);
+            return true;
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            return false;
+        }
+    }
+}
+
+============================================================
+FILE: src\Modules\Catalog\StrmManager.Modules.Catalog.Infrastructure\CatalogModule.cs
+============================================================
+using FluentValidation;
+using Microsoft.Data.Sqlite;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Http.Resilience;
+using Microsoft.Extensions.Options;
+using Polly;
+using StrmManager.Common.Application.Messaging;
+using StrmManager.Modules.Catalog.Application.Abstractions.Data;
+using StrmManager.Modules.Catalog.Application.Metadata;
+using StrmManager.Modules.Catalog.Application.Processing;
+using StrmManager.Modules.Catalog.Application.Series.AddSeries;
+using StrmManager.Modules.Catalog.Application.Status;
+using StrmManager.Modules.Catalog.Domain.Episodes;
+using StrmManager.Modules.Catalog.Domain.Movies;
+using StrmManager.Modules.Catalog.Domain.Seasons;
+using StrmManager.Modules.Catalog.Domain.SourceAttempts;
+using StrmManager.Modules.Catalog.Domain.StrmFiles;
+using StrmManager.Modules.Catalog.Infrastructure.Database;
+using StrmManager.Modules.Catalog.Infrastructure.Episodes;
+using StrmManager.Modules.Catalog.Infrastructure.Metadata.Cinemeta;
+using StrmManager.Modules.Catalog.Infrastructure.Movies;
+using StrmManager.Modules.Catalog.Infrastructure.Seasons;
+using StrmManager.Modules.Catalog.Infrastructure.SourceAttempts;
+using StrmManager.Modules.Catalog.Infrastructure.StrmFiles;
+using ISeriesRepository = StrmManager.Modules.Catalog.Domain.Series.ISeriesRepository;
+using SeriesRepository = StrmManager.Modules.Catalog.Infrastructure.Series.SeriesRepository;
+
+namespace StrmManager.Modules.Catalog.Infrastructure;
+
+public static class CatalogModule
+{
+    public static IServiceCollection AddCatalogModule(this IServiceCollection services, IConfiguration configuration)
+    {
+        string connectionString = configuration.GetConnectionString("Database")
+            ?? throw new InvalidOperationException("The 'Database' connection string is not configured.");
+
+        // Microsoft.Data.Sqlite does not enforce FK constraints unless explicitly asked
+        // to - without this, the Restrict/cascade behaviors configured on the
+        // Series/Season/Episode relationships would be silently ignored at runtime.
+        var sqliteConnectionStringBuilder = new SqliteConnectionStringBuilder(connectionString)
+        {
+            ForeignKeys = true,
+            // Now that the API host and two Scheduling BackgroundServices can genuinely
+            // overlap (Phase 4), a brief SQLITE_BUSY on a concurrent write is expected
+            // occasionally - retry internally for up to 30s rather than surfacing it as
+            // an immediate failure. See ADR-014 (WAL + busy-timeout decision).
+            DefaultTimeout = 30,
+        };
+
+        services.AddDbContext<CatalogDbContext>(options => options.UseSqlite(sqliteConnectionStringBuilder.ConnectionString));
+
+        services.AddScoped<IUnitOfWork>(sp => sp.GetRequiredService<CatalogDbContext>());
+
+        services.AddScoped<ISeriesRepository, SeriesRepository>();
+        services.AddScoped<ISeasonRepository, SeasonRepository>();
+        services.AddScoped<IEpisodeRepository, EpisodeRepository>();
+        services.AddScoped<IMovieRepository, MovieRepository>();
+        services.AddScoped<ISourceAttemptRepository, SourceAttemptRepository>();
+        services.AddScoped<IStrmFileRepository, StrmFileRepository>();
+
+        services.AddScoped<CatalogSynchronizer>();
+
+        services.AddHandlersFromAssembly(typeof(AddSeriesCommand).Assembly);
+        services.AddValidatorsFromAssembly(typeof(AddSeriesCommand).Assembly, includeInternalTypes: true);
+
+        services.AddCinemetaMetadataProvider(configuration);
+
+        services.AddOptions<ProcessingOptions>()
+            .Bind(configuration.GetSection(ProcessingOptions.SectionName))
+            .ValidateDataAnnotations()
+            .ValidateOnStart();
+
+        services.AddOptions<MetadataRefreshOptions>()
+            .Bind(configuration.GetSection(MetadataRefreshOptions.SectionName))
+            .ValidateDataAnnotations()
+            .ValidateOnStart();
+
+        // No [Required]/[Range] attributes - Commit is legitimately null outside Docker
+        // (e.g. `dotnet run` in dev), not a misconfiguration. See BuildInfoOptions.
+        services.AddOptions<BuildInfoOptions>()
+            .Bind(configuration.GetSection(BuildInfoOptions.SectionName))
+            .ValidateDataAnnotations()
+            .ValidateOnStart();
+
+        // Safe fallback if nothing else registers ISchedulerStatusProvider (e.g. a test
+        // host that never adds the Scheduling module) - Scheduling.Infrastructure's own
+        // registration is added after this one in Program.cs and wins for resolution.
+        services.TryAddSingleton<ISchedulerStatusProvider, DisabledSchedulerStatusProvider>();
+
+        return services;
+    }
+
+    private sealed class DisabledSchedulerStatusProvider : ISchedulerStatusProvider
+    {
+        public bool Enabled => false;
+    }
+
+    private static void AddCinemetaMetadataProvider(this IServiceCollection services, IConfiguration configuration)
+    {
+        services.AddOptions<CinemetaOptions>()
+            .Bind(configuration.GetSection(CinemetaOptions.SectionName))
+            .ValidateDataAnnotations()
+            .ValidateOnStart();
+
+        services.AddHttpClient<IMetadataProvider, CinemetaMetadataProvider>((sp, client) =>
+            {
+                CinemetaOptions options = sp.GetRequiredService<IOptions<CinemetaOptions>>().Value;
+                client.BaseAddress = new Uri(options.BaseUrl);
+            })
+            // One layer owns HTTP resilience (here) - CinemetaMetadataProvider itself
+            // never retries. Conservative on purpose: a handful of retries with a short
+            // overall timeout, and 4xx (including 404 "series not found") is never
+            // retried by the default ShouldHandle predicate - it isn't transient.
+            .AddResilienceHandler("cinemeta-metadata", (builder, context) =>
+            {
+                CinemetaOptions options = context.ServiceProvider.GetRequiredService<IOptions<CinemetaOptions>>().Value;
+
+                builder.AddTimeout(TimeSpan.FromSeconds(options.TimeoutSeconds));
+                builder.AddRetry(new HttpRetryStrategyOptions
+                {
+                    // HttpRetryStrategyOptions' default ShouldHandle already targets
+                    // only transient outcomes (5xx, 408, network/timeout failures) -
+                    // 404 "not found" and other 4xx responses are never retried.
+                    MaxRetryAttempts = 2,
+                    BackoffType = DelayBackoffType.Exponential,
+                    Delay = TimeSpan.FromMilliseconds(200),
+                    UseJitter = true,
+                });
+            });
+    }
+}
