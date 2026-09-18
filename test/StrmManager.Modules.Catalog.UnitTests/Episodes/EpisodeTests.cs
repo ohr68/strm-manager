@@ -174,4 +174,113 @@ public class EpisodeTests
         Assert.True(result.IsFailure);
         Assert.Equal(MediaStatus.Scheduled, episode.Status);
     }
+
+    [Theory]
+    [InlineData(false)] // Searching
+    [InlineData(true)] // Validating
+    public void RecoverInterruptedProcessing_FromSearchingOrValidating_ReturnsToPendingWithoutTouchingAttemptCountOrLastError(bool alsoStartValidating)
+    {
+        DateTime utcNow = ReleaseAtUtc;
+        Episode episode = CreateScheduledEpisode(utcNow);
+        episode.TryBecomeEligible(utcNow);
+        episode.StartSearching(utcNow);
+
+        if (alsoStartValidating)
+        {
+            episode.StartValidating(utcNow);
+        }
+
+        DateTime recoveryUtcNow = utcNow.AddMinutes(20);
+        var result = episode.RecoverInterruptedProcessing(recoveryUtcNow);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(MediaStatus.Pending, episode.Status);
+        Assert.Equal(0, episode.AttemptCount); // not a completed attempt - no outcome was ever reached
+        Assert.Null(episode.LastError);
+        Assert.Equal(recoveryUtcNow, episode.UpdatedAtUtc);
+    }
+
+    [Fact]
+    public void RecoverInterruptedProcessing_FromPending_Fails()
+    {
+        DateTime utcNow = ReleaseAtUtc;
+        Episode episode = CreateScheduledEpisode(utcNow);
+        episode.TryBecomeEligible(utcNow);
+
+        var result = episode.RecoverInterruptedProcessing(utcNow);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal(MediaStatus.Pending, episode.Status);
+    }
+
+    [Fact]
+    public void RecoverInterruptedProcessing_FromCompleted_Fails()
+    {
+        DateTime utcNow = ReleaseAtUtc;
+        Episode episode = CreateScheduledEpisode(utcNow);
+        episode.TryBecomeEligible(utcNow);
+        episode.StartSearching(utcNow);
+        episode.StartValidating(utcNow);
+        episode.MarkCompleted(utcNow);
+
+        var result = episode.RecoverInterruptedProcessing(utcNow);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal(MediaStatus.Completed, episode.Status);
+    }
+
+    [Fact]
+    public void MarkError_WithNextAttemptAtUtc_IsRetryableAndClearsOnRetry()
+    {
+        DateTime utcNow = ReleaseAtUtc;
+        Episode episode = CreateScheduledEpisode(utcNow);
+        episode.TryBecomeEligible(utcNow);
+        episode.StartSearching(utcNow);
+
+        DateTime nextAttemptAtUtc = utcNow.AddMinutes(15);
+        episode.MarkError(utcNow, "stream provider unavailable", nextAttemptAtUtc);
+
+        Assert.Equal(MediaStatus.Error, episode.Status);
+        Assert.Equal(nextAttemptAtUtc, episode.NextAttemptAtUtc);
+
+        var retryResult = episode.Retry(nextAttemptAtUtc);
+
+        Assert.True(retryResult.IsSuccess);
+        Assert.Equal(MediaStatus.Pending, episode.Status);
+        Assert.Null(episode.NextAttemptAtUtc);
+    }
+
+    [Fact]
+    public void MarkError_WithoutNextAttemptAtUtc_IsNotAutomaticallyRetryable()
+    {
+        DateTime utcNow = ReleaseAtUtc;
+        Episode episode = CreateScheduledEpisode(utcNow);
+        episode.TryBecomeEligible(utcNow);
+        episode.StartSearching(utcNow);
+
+        episode.MarkError(utcNow, "failed to write .strm file");
+
+        Assert.Equal(MediaStatus.Error, episode.Status);
+        Assert.Null(episode.NextAttemptAtUtc);
+    }
+
+    [Fact]
+    public void MarkError_AlwaysOverwritesAStalePriorNextAttemptAtUtc()
+    {
+        // A previous Unavailable cycle may have left NextAttemptAtUtc set - MarkError
+        // must never let that leak through and make a non-retryable failure look
+        // retryable to the maintenance worker's GetRetryableAsync query.
+        DateTime utcNow = ReleaseAtUtc;
+        Episode episode = CreateScheduledEpisode(utcNow);
+        episode.TryBecomeEligible(utcNow);
+        episode.StartSearching(utcNow);
+        episode.MarkUnavailable(utcNow, utcNow.AddHours(6), "no streams returned");
+        episode.Retry(utcNow.AddHours(6));
+        episode.StartSearching(utcNow.AddHours(6));
+
+        episode.MarkError(utcNow.AddHours(6), "failed to write .strm file");
+
+        Assert.Equal(MediaStatus.Error, episode.Status);
+        Assert.Null(episode.NextAttemptAtUtc);
+    }
 }
