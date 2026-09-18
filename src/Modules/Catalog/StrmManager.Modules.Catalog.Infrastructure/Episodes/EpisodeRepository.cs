@@ -41,10 +41,15 @@ internal sealed class EpisodeRepository(CatalogDbContext context) : IEpisodeRepo
                 episode.UpdatedAtUtc <= staleThresholdUtc)
             .ToListAsync(cancellationToken);
 
-    public async Task<IReadOnlyList<Episode>> GetPendingForProcessingAsync(int limit, CancellationToken cancellationToken = default) =>
+    public async Task<IReadOnlyList<Episode>> GetPendingForProcessingAsync(
+        int limit,
+        CancellationToken cancellationToken = default) =>
         await context.Episodes
             .Where(episode => episode.Status == MediaStatus.Pending)
-            .OrderBy(episode => episode.UpdatedAtUtc)
+            .OrderBy(episode => episode.AttemptCount > 0)
+            .ThenBy(episode => episode.UpdatedAtUtc)
+            .ThenBy(episode => episode.ReleaseAtUtc)
+            .ThenBy(episode => episode.Id)
             .Take(limit)
             .ToListAsync(cancellationToken);
 

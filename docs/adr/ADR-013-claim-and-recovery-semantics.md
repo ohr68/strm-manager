@@ -119,6 +119,34 @@ meant to be automatic.
 required no change at all to correctly support this: a non-retryable `Error` simply never
 has a `NextAttemptAtUtc`, so it was never a match.
 
+## Decision 6: first processing attempts have priority over retries
+
+`EpisodeProcessingWorker` selects `Pending` episodes through
+`GetPendingForProcessingAsync`, bounded by `SchedulingOptions.BatchSize`. Once automatic
+retries were introduced, `Pending` stopped representing a single kind of work: it can
+contain both episodes that have never reached a processing outcome and episodes returning
+from `Unavailable`/retryable `Error`.
+
+A retry backlog must not delay newly eligible content that has never been processed.
+`Episode.AttemptCount` already provides the distinction without adding another persisted
+field: `AttemptCount == 0` means no processing attempt has reached an outcome yet, while
+`AttemptCount > 0` means at least one outcome has already been recorded. Therefore,
+`GetPendingForProcessingAsync` selects first-attempt episodes before retry episodes.
+
+Within the same priority class, episodes that have been `Pending` longer are selected
+first using `UpdatedAtUtc`. `ReleaseAtUtc` and `Id` provide deterministic tie-breaking;
+they do not introduce additional business-priority classes.
+
+Interrupted processing requires no special queue marker. As established by Decision 4,
+`RecoverInterruptedProcessing` preserves `AttemptCount`, so an interrupted run naturally
+returns to the priority class appropriate to its history: a first attempt interrupted
+before any outcome remains a first attempt, while an interrupted retry remains a retry.
+
+`SchedulingOptions.BatchSize` continues to bound how many `Pending` episodes the worker
+selects per processing tick. Catalog maintenance may promote multiple due retries to
+`Pending` in one maintenance run, but those retries cannot move ahead of first-attempt
+work solely because they entered the queue earlier.
+
 ## Consequences
 
 - `ProcessEpisodeCommandHandler` now performs two `SaveChangesAsync`-family calls before
@@ -129,3 +157,9 @@ has a `NextAttemptAtUtc`, so it was never a match.
   convention - verified directly, not just argued.
 - `Episode.AttemptCount` now has a precise meaning: it counts completed processing
   attempts (an outcome was reached), never interrupted or claim-rejected ones.
+- A backlog of automatic retries cannot delay `Pending` episodes that have never reached
+  a processing outcome; first attempts are selected first regardless of how long a retry
+  has already been waiting.
+- Queue priority requires no new persisted state or migration: it derives from the
+  existing `AttemptCount` semantics and remains bounded independently by
+  `SchedulingOptions.BatchSize`.
