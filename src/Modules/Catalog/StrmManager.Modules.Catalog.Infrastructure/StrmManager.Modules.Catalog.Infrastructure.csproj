@@ -8,6 +8,8 @@
   <ItemGroup>
     <PackageReference Include="FluentValidation.DependencyInjectionExtensions" Version="12.0.0" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.12" />
+    <PackageReference Include="Microsoft.Extensions.Http.Resilience" Version="9.10.0" />
+    <PackageReference Include="Microsoft.Extensions.Options.DataAnnotations" Version="10.0.0" />
   </ItemGroup>
 
   <PropertyGroup>
@@ -15,5 +17,11 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Lets unit tests exercise CinemetaMetadataMapper/DTOs directly (fixture-based
+         mapping tests) without making internal Infrastructure details public. -->
+    <InternalsVisibleTo Include="StrmManager.Modules.Catalog.UnitTests" />
+  </ItemGroup>
 
 </Project>

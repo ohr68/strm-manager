@@ -1,0 +1,13 @@
+{
+    "meta": {
+        "id": "tt8888888",
+        "name": "No Release Date Show",
+        "releaseInfo": "2025-",
+        "runtime": "25 min",
+        "status": "Continuing",
+        "videos": [
+            { "id": "tt8888888:1:1", "title": "Pilot", "season": 1, "number": 1, "episode": 1, "firstAired": null, "released": null },
+            { "id": "tt8888888:1:2", "title": "Episode Two", "season": 1, "number": 2, "episode": 2, "firstAired": "2025-01-08T05:00:00.000Z", "released": "2025-01-08T05:00:00.000Z" }
+        ]
+    }
+}

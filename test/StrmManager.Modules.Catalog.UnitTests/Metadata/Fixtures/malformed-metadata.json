@@ -1,0 +1,11 @@
+{
+    "meta": {
+        "id": "tt5555555",
+        "name": "Sparse Metadata Show",
+        "releaseInfo": "2022-",
+        "videos": [
+            { "id": "tt5555555:1:1", "season": 1, "number": 1, "firstAired": "2022-02-01T05:00:00.000Z" },
+            { "id": "tt5555555:1:2", "title": "Has Title", "season": 1, "number": 2, "firstAired": "2022-02-08T05:00:00.000Z" }
+        ]
+    }
+}

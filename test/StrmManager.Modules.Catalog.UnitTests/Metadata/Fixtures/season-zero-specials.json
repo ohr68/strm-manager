@@ -1,0 +1,13 @@
+{
+    "meta": {
+        "id": "tt1234567",
+        "name": "Show With Specials",
+        "releaseInfo": "2021-",
+        "runtime": "30 min",
+        "status": "Continuing",
+        "videos": [
+            { "id": "tt1234567:0:1", "title": "Behind the Scenes", "season": 0, "number": 1, "episode": 1, "firstAired": "2021-05-01T04:00:00.000Z", "released": "2021-05-01T04:00:00.000Z" },
+            { "id": "tt1234567:1:1", "title": "Pilot", "season": 1, "number": 1, "episode": 1, "firstAired": "2021-06-01T04:00:00.000Z", "released": "2021-06-01T04:00:00.000Z" }
+        ]
+    }
+}

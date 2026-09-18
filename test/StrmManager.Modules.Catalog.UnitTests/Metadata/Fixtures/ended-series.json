@@ -1,0 +1,13 @@
+{
+    "meta": {
+        "id": "tt0903747",
+        "name": "A Completed Show",
+        "releaseInfo": "2018-2020",
+        "runtime": "45 min",
+        "status": "Ended",
+        "videos": [
+            { "id": "tt0903747:1:1", "title": "Pilot", "season": 1, "number": 1, "episode": 1, "firstAired": "2018-01-20T04:00:00.000Z", "released": "2018-01-20T04:00:00.000Z" },
+            { "id": "tt0903747:1:2", "title": "Cat's in the Bag...", "season": 1, "number": 2, "episode": 2, "firstAired": "2018-01-27T04:00:00.000Z", "released": "2018-01-27T04:00:00.000Z" }
+        ]
+    }
+}

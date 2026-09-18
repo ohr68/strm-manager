@@ -3,8 +3,12 @@ using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Http.Resilience;
+using Microsoft.Extensions.Options;
+using Polly;
 using StrmManager.Common.Application.Messaging;
 using StrmManager.Modules.Catalog.Application.Abstractions.Data;
+using StrmManager.Modules.Catalog.Application.Metadata;
 using StrmManager.Modules.Catalog.Application.Series.AddSeries;
 using StrmManager.Modules.Catalog.Domain.Episodes;
 using StrmManager.Modules.Catalog.Domain.Movies;
@@ -13,6 +17,7 @@ using StrmManager.Modules.Catalog.Domain.SourceAttempts;
 using StrmManager.Modules.Catalog.Domain.StrmFiles;
 using StrmManager.Modules.Catalog.Infrastructure.Database;
 using StrmManager.Modules.Catalog.Infrastructure.Episodes;
+using StrmManager.Modules.Catalog.Infrastructure.Metadata.Cinemeta;
 using StrmManager.Modules.Catalog.Infrastructure.Movies;
 using StrmManager.Modules.Catalog.Infrastructure.Seasons;
 using StrmManager.Modules.Catalog.Infrastructure.SourceAttempts;
@@ -48,9 +53,47 @@ public static class CatalogModule
         services.AddScoped<ISourceAttemptRepository, SourceAttemptRepository>();
         services.AddScoped<IStrmFileRepository, StrmFileRepository>();
 
+        services.AddScoped<CatalogSynchronizer>();
+
         services.AddHandlersFromAssembly(typeof(AddSeriesCommand).Assembly);
         services.AddValidatorsFromAssembly(typeof(AddSeriesCommand).Assembly, includeInternalTypes: true);
 
+        services.AddCinemetaMetadataProvider(configuration);
+
         return services;
+    }
+
+    private static void AddCinemetaMetadataProvider(this IServiceCollection services, IConfiguration configuration)
+    {
+        services.AddOptions<CinemetaOptions>()
+            .Bind(configuration.GetSection(CinemetaOptions.SectionName))
+            .ValidateDataAnnotations()
+            .ValidateOnStart();
+
+        services.AddHttpClient<IMetadataProvider, CinemetaMetadataProvider>((sp, client) =>
+            {
+                CinemetaOptions options = sp.GetRequiredService<IOptions<CinemetaOptions>>().Value;
+                client.BaseAddress = new Uri(options.BaseUrl);
+            })
+            // One layer owns HTTP resilience (here) - CinemetaMetadataProvider itself
+            // never retries. Conservative on purpose: a handful of retries with a short
+            // overall timeout, and 4xx (including 404 "series not found") is never
+            // retried by the default ShouldHandle predicate - it isn't transient.
+            .AddResilienceHandler("cinemeta-metadata", (builder, context) =>
+            {
+                CinemetaOptions options = context.ServiceProvider.GetRequiredService<IOptions<CinemetaOptions>>().Value;
+
+                builder.AddTimeout(TimeSpan.FromSeconds(options.TimeoutSeconds));
+                builder.AddRetry(new HttpRetryStrategyOptions
+                {
+                    // HttpRetryStrategyOptions' default ShouldHandle already targets
+                    // only transient outcomes (5xx, 408, network/timeout failures) -
+                    // 404 "not found" and other 4xx responses are never retried.
+                    MaxRetryAttempts = 2,
+                    BackoffType = DelayBackoffType.Exponential,
+                    Delay = TimeSpan.FromMilliseconds(200),
+                    UseJitter = true,
+                });
+            });
     }
 }
