@@ -29,6 +29,8 @@
     <ProjectReference Include="..\..\src\Modules\Catalog\StrmManager.Modules.Catalog.Presentation\StrmManager.Modules.Catalog.Presentation.csproj" />
     <ProjectReference Include="..\..\src\Common\StrmManager.Common.Domain\StrmManager.Common.Domain.csproj" />
     <ProjectReference Include="..\..\src\Common\StrmManager.Common.Application\StrmManager.Common.Application.csproj" />
+    <ProjectReference Include="..\..\src\Modules\MediaProcessing\StrmManager.Modules.MediaProcessing.Application\StrmManager.Modules.MediaProcessing.Application.csproj" />
+    <ProjectReference Include="..\..\src\Modules\MediaProcessing\StrmManager.Modules.MediaProcessing.Infrastructure\StrmManager.Modules.MediaProcessing.Infrastructure.csproj" />
   </ItemGroup>
 
 </Project>
