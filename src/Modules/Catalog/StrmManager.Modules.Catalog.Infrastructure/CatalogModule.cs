@@ -3,6 +3,7 @@ using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Http.Resilience;
 using Microsoft.Extensions.Options;
 using Polly;
@@ -11,6 +12,7 @@ using StrmManager.Modules.Catalog.Application.Abstractions.Data;
 using StrmManager.Modules.Catalog.Application.Metadata;
 using StrmManager.Modules.Catalog.Application.Processing;
 using StrmManager.Modules.Catalog.Application.Series.AddSeries;
+using StrmManager.Modules.Catalog.Application.Status;
 using StrmManager.Modules.Catalog.Domain.Episodes;
 using StrmManager.Modules.Catalog.Domain.Movies;
 using StrmManager.Modules.Catalog.Domain.Seasons;
@@ -41,6 +43,11 @@ public static class CatalogModule
         var sqliteConnectionStringBuilder = new SqliteConnectionStringBuilder(connectionString)
         {
             ForeignKeys = true,
+            // Now that the API host and two Scheduling BackgroundServices can genuinely
+            // overlap (Phase 4), a brief SQLITE_BUSY on a concurrent write is expected
+            // occasionally - retry internally for up to 30s rather than surfacing it as
+            // an immediate failure. See ADR-014 (WAL + busy-timeout decision).
+            DefaultTimeout = 30,
         };
 
         services.AddDbContext<CatalogDbContext>(options => options.UseSqlite(sqliteConnectionStringBuilder.ConnectionString));
@@ -66,7 +73,22 @@ public static class CatalogModule
             .ValidateDataAnnotations()
             .ValidateOnStart();
 
+        services.AddOptions<MetadataRefreshOptions>()
+            .Bind(configuration.GetSection(MetadataRefreshOptions.SectionName))
+            .ValidateDataAnnotations()
+            .ValidateOnStart();
+
+        // Safe fallback if nothing else registers ISchedulerStatusProvider (e.g. a test
+        // host that never adds the Scheduling module) - Scheduling.Infrastructure's own
+        // registration is added after this one in Program.cs and wins for resolution.
+        services.TryAddSingleton<ISchedulerStatusProvider, DisabledSchedulerStatusProvider>();
+
         return services;
+    }
+
+    private sealed class DisabledSchedulerStatusProvider : ISchedulerStatusProvider
+    {
+        public bool Enabled => false;
     }
 
     private static void AddCinemetaMetadataProvider(this IServiceCollection services, IConfiguration configuration)
