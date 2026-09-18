@@ -19,6 +19,10 @@ internal sealed class EpisodeConfiguration : IEntityTypeConfiguration<Episode>
         builder.Property(episode => episode.LastError).HasMaxLength(2048);
 
         builder.HasIndex(episode => new { episode.SeasonId, episode.EpisodeNumber }).IsUnique();
+        // ExternalId (e.g. "tt27497393:1:9") is globally unique per the whole catalog,
+        // not just per season - a second, independent guard against duplicate
+        // synchronization beyond the composite SeasonId+EpisodeNumber index above.
+        builder.HasIndex(episode => episode.ExternalId).IsUnique();
         builder.HasIndex(episode => episode.Status);
         builder.HasIndex(episode => episode.ReleaseAtUtc);
         builder.HasIndex(episode => episode.NextAttemptAtUtc);
