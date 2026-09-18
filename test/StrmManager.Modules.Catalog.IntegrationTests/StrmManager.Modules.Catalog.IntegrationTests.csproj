@@ -25,6 +25,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Api\StrmManager.Api\StrmManager.Api.csproj" />
     <ProjectReference Include="..\..\src\Modules\Catalog\StrmManager.Modules.Catalog.Infrastructure\StrmManager.Modules.Catalog.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src\Modules\MediaProcessing\StrmManager.Modules.MediaProcessing.Application\StrmManager.Modules.MediaProcessing.Application.csproj" />
   </ItemGroup>
 
 </Project>

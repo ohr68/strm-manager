@@ -4,24 +4,35 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using StrmManager.Modules.Catalog.Application.Metadata;
+using StrmManager.Modules.MediaProcessing.Application.Streams;
+using StrmManager.Modules.MediaProcessing.Application.Validation;
 
 namespace StrmManager.Modules.Catalog.IntegrationTests.Infrastructure;
 
 public sealed class ApiWebApplicationFactory : WebApplicationFactory<Program>
 {
     private readonly string _databasePath = Path.Combine(Path.GetTempPath(), $"strm-manager-tests-{Guid.NewGuid():N}.db");
+    private readonly string _strmRootPath = Path.Combine(Path.GetTempPath(), $"strm-manager-tests-strm-{Guid.NewGuid():N}");
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment("Development");
         builder.UseSetting("ConnectionStrings:Database", $"Data Source={_databasePath}");
 
-        // Never hit live Cinemeta from the test suite - defaults to "not found" for
-        // everything, which exercises AddSeries' graceful-degradation path. Tests that
-        // need a specific metadata response use factory.WithWebHostBuilder(...) to
-        // register their own isolated fake instead of mutating this shared one.
+        // Never write real .strm output into the repo's data/stream directory - every
+        // factory instance gets its own throwaway temp root, cleaned up on Dispose.
+        builder.UseSetting("Strm:RootPath", _strmRootPath);
+
+        // Never hit live Cinemeta/FrostStream or spawn a real ffprobe process from the
+        // test suite - each defaults to a safe/deterministic no-op (see the individual
+        // fakes). Tests that need specific behavior use factory.WithWebHostBuilder(...)
+        // to register their own isolated fake instead of mutating this shared one.
         builder.ConfigureTestServices(services =>
-            services.AddSingleton<IMetadataProvider, FakeMetadataProvider>());
+        {
+            services.AddSingleton<IMetadataProvider, FakeMetadataProvider>();
+            services.AddSingleton<IStreamProvider, FakeStreamProvider>();
+            services.AddSingleton<IMediaValidator, FakeMediaValidator>();
+        });
     }
 
     protected override void Dispose(bool disposing)
@@ -38,6 +49,11 @@ public sealed class ApiWebApplicationFactory : WebApplicationFactory<Program>
         if (File.Exists(_databasePath))
         {
             File.Delete(_databasePath);
+        }
+
+        if (Directory.Exists(_strmRootPath))
+        {
+            Directory.Delete(_strmRootPath, recursive: true);
         }
     }
 }
