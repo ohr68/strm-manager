@@ -23,6 +23,13 @@ public sealed class ApiWebApplicationFactory : WebApplicationFactory<Program>
         // factory instance gets its own throwaway temp root, cleaned up on Dispose.
         builder.UseSetting("Strm:RootPath", _strmRootPath);
 
+        // Scheduling's BackgroundServices must not run against a test database - most
+        // tests act as their own "caller" against a fully synchronous, deterministic
+        // pipeline, and a live worker racing to claim/process the same episodes would
+        // make tests flaky (see ADR-012/section 52). Dedicated Scheduling tests enable
+        // it explicitly via factory.WithWebHostBuilder(...).
+        builder.UseSetting("Scheduling:Enabled", "false");
+
         // Never hit live Cinemeta/FrostStream or spawn a real ffprobe process from the
         // test suite - each defaults to a safe/deterministic no-op (see the individual
         // fakes). Tests that need specific behavior use factory.WithWebHostBuilder(...)

@@ -7,6 +7,7 @@ using StrmManager.Modules.Catalog.Infrastructure.Database;
 using StrmManager.Modules.Catalog.Presentation;
 using StrmManager.Modules.MediaProcessing.Infrastructure;
 using StrmManager.Modules.MediaProcessing.Infrastructure.Validation.Ffprobe;
+using StrmManager.Modules.Scheduling.Infrastructure;
 
 WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 
@@ -14,6 +15,9 @@ builder.Services.AddSingleton(TimeProvider.System);
 
 builder.Services.AddCatalogModule(builder.Configuration);
 builder.Services.AddMediaProcessingModule(builder.Configuration);
+// Registered after AddCatalogModule - its ISchedulerStatusProvider registration wins
+// resolution over Catalog's own fallback (see CatalogModule/ADR-012).
+builder.Services.AddSchedulingModule(builder.Configuration);
 builder.Services.AddEndpoints(AssemblyReference.Assembly);
 
 builder.Services
@@ -41,11 +45,20 @@ if (app.Environment.IsDevelopment())
 
 // This service owns its SQLite file end-to-end (no separate deploy-time migration
 // step, unlike Evently's Postgres setup) - applying pending migrations on every
-// startup is the intended schema management strategy in every environment.
+// startup is the intended schema management strategy in every environment. This also
+// runs strictly before app.Run() starts any BackgroundService (Scheduling's workers),
+// so they never race the schema - see ADR-014.
 using (IServiceScope scope = app.Services.CreateScope())
 {
     CatalogDbContext dbContext = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
     await dbContext.Database.MigrateAsync();
+
+    // WAL lets readers (GET /api/status, GET /api/episodes, ...) proceed without
+    // blocking on a concurrent writer (a worker mid-tick) - now that the API and two
+    // Scheduling BackgroundServices genuinely overlap. A no-op if already WAL (the mode
+    // persists in the database file itself); run once at startup, never per-request.
+    // See ADR-014.
+    await dbContext.Database.ExecuteSqlRawAsync("PRAGMA journal_mode=WAL;");
 }
 
 app.MapEndpoints();
