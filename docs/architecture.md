@@ -16,13 +16,14 @@ Dependencies always point inward. `test/StrmManager.ArchitectureTests` enforces 
 NetArchTest: Domain cannot depend on Application/Infrastructure/Presentation, Application
 cannot depend on Infrastructure/Presentation, Presentation cannot depend on Infrastructure.
 
-## Dependency diagram (current: Catalog + MediaProcessing)
+## Dependency diagram (current: Catalog + MediaProcessing + Scheduling)
 
 ```
 StrmManager.Api
   |-- Catalog.Presentation --> Catalog.Application --> Catalog.Domain
   |-- Catalog.Infrastructure --> Catalog.Application, Catalog.Domain
   |-- MediaProcessing.Infrastructure --> MediaProcessing.Application
+  |-- Scheduling.Infrastructure --> Catalog.Application, Catalog.Domain
   |-- Common.Presentation
 
 Catalog.Application --> MediaProcessing.Application, Catalog.Domain
@@ -41,8 +42,18 @@ smaller structure was chosen once there was something real to build.
 (`ProcessEpisodeCommandHandler`) lives in `Catalog.Application`, not in
 `MediaProcessing`, since it drives `Episode`'s state machine directly. See
 [ADR-008](adr/ADR-008-media-processing-module-boundary.md) for the full reasoning.
-`Scheduling` (still not implemented) will depend on `Catalog.Application` (to call
-`ProcessEpisodeCommandHandler`) the same way; `Catalog` will never depend back on it.
+
+`Scheduling` (Phase 4) goes one step further: a single `Scheduling.Infrastructure`
+project, no `Scheduling.Application` at all. Its two `BackgroundService`s
+(`CatalogMaintenanceWorker`, `EpisodeProcessingWorker`) are thin callers - all the actual
+autonomous-behavior logic lives in `Catalog.Application` (`RunCatalogMaintenanceCommand`,
+`ProcessEpisodeCommandHandler`), the same way an HTTP endpoint is a thin caller into
+Application. See [ADR-012](adr/ADR-012-scheduling-module-architecture.md).
+`GET /api/status` needs to know whether the scheduler is enabled without
+`Catalog.Application` depending on `Scheduling` - solved with a small Dependency
+Inversion abstraction (`ISchedulerStatusProvider`, defined in `Catalog.Application`,
+implemented in `Scheduling.Infrastructure`), the same shape `IMetadataProvider`/
+`IStreamProvider` already use.
 
 There is no `Common.Infrastructure` project. It existed in the initial foundation as an
 empty shell (mirroring Evently's `Evently.Common.Infrastructure`, which holds shared
@@ -114,17 +125,25 @@ Rules enforced by `Episode` (and mirrored by `Movie`) in
 - `Unavailable` and `Error` are **distinct** terminal-but-recoverable states: `Unavailable`
   means "no technical failure, just nothing to show right now" (empty stream list, no
   candidate passed validation); `Error` means a technical failure (HTTP failure, timeout,
-  ffprobe crash, filesystem error).
+  ffprobe crash, filesystem error). `MarkError`'s `nextAttemptAtUtc` (Phase 4) is the sole
+  retryability signal for `Error` - present for transient/technical failures (stream
+  provider outages), absent for potentially persistent ones (a `.strm` write failure) -
+  see [ADR-013](adr/ADR-013-claim-and-recovery-semantics.md).
 - `Completed` never goes back to `Pending`: `Retry()` only accepts `Unavailable`/`Error`
   as the source state.
 - `MarkUnavailable`/`MarkError` refuse to fire once the episode is `Completed`.
-- **Crash/restart safety**: `Searching` and `Validating` only exist as long as a single
-  processing pipeline run is in flight; the entity is loaded as `Pending`, transitioned
-  in memory, and only the *terminal* outcome (`Completed`/`Unavailable`/`Error`, or a
-  no-op if the process dies mid-pipeline) is ever persisted. A crash between `Pending`
-  and a terminal state simply leaves the row as `Pending` in the database - the next
-  scheduler tick picks it up again. Nothing can get permanently stuck in `Searching`/
-  `Validating`.
+- **Claim and crash/restart safety (Phase 4, see** [ADR-013](adr/ADR-013-claim-and-recovery-semantics.md)
+  **- supersedes ADR-011's Phase 3 design)**: `Searching` and `Validating` ARE now
+  persisted, immediately, because `EpisodeProcessingWorker` and manual API calls can race
+  for the same episode - `UpdatedAtUtc` doubles as an EF Core optimistic-concurrency
+  token, so only one of two overlapping claims can win the save; the loser gets
+  `EpisodeErrors.AlreadyBeingProcessed` (409) before any FrostStream/ffprobe work starts.
+  A run genuinely interrupted (crash, restart, cancelled shutdown) leaves the row stuck
+  in `Searching`/`Validating` until `RunCatalogMaintenanceCommandHandler`'s stale-
+  processing sweep notices (`UpdatedAtUtc` older than `ProcessingOptions.StaleProcessingThreshold`,
+  15 minutes by default) and calls the new `Episode.RecoverInterruptedProcessing(utcNow)`
+  - back to `Pending`, without touching `AttemptCount`/`LastError` (an interrupted run
+  reached no outcome, so it isn't recorded as one).
 
 **On the `Episode`/`Movie` duplication**: `Movie`'s state machine is currently a
 line-for-line copy of `Episode`'s (same seven transition methods, same guards). This is
@@ -158,15 +177,18 @@ Driven by `POST /api/series` (first sync, inline, best-effort) and
 place. Full reasoning, including why this isn't a separate `Providers` module, in
 [ADR-007](adr/ADR-007-metadata-provider-and-catalog-synchronization.md).
 
-## Processing pipeline (implemented, Phase 3 - explicit trigger only, no scheduler)
+## Processing pipeline (implemented, Phase 3; claim added Phase 4)
 
 ```
-POST /api/episodes/{id}/process
+POST /api/episodes/{id}/process   [called by a human, or by EpisodeProcessingWorker]
   -> already Completed?  return idempotently, no side effects
-  -> Episode.StartSearching()                          [in-memory only, no save yet]
+  -> Episode.StartSearching()
+  -> TrySaveChangesAsync()   <-- the claim: persisted before any slow work begins
+       lost (concurrency conflict) -> EpisodeErrors.AlreadyBeingProcessed (409)
   -> IStreamProvider.GetEpisodeStreamsAsync(reference)  [FrostStreamProvider]
-       failure -> MarkError   |   empty -> MarkUnavailable
-  -> Episode.StartValidating()                          [in-memory only, no save yet]
+       failure -> MarkError(retryable?)   |   empty -> MarkUnavailable
+  -> Episode.StartValidating()
+  -> SaveChangesAsync()   (no concurrency risk here - the claim already excluded other callers)
   -> for each StreamCandidate (provider's order):
        EpisodeIdentityValidator.Evaluate(candidateText, season, episode)  [per candidate]
        not Compatible -> record SourceAttempt(Rejected), try next candidate
@@ -174,23 +196,50 @@ POST /api/episodes/{id}/process
                      -> record SourceAttempt(result), approved? break : try next candidate
   -> no candidate approved -> Episode.MarkUnavailable(nextAttemptAtUtc: retry policy)
   -> approved -> IStrmWriter.WriteEpisodeAsync(...) -> insert/overwrite StrmFile -> Episode.MarkCompleted()
-  -> IUnitOfWork.SaveChangesAsync()   (single call, at whichever terminal outcome is reached)
+  -> IUnitOfWork.SaveChangesAsync()   (terminal outcome)
 ```
 
 Each candidate's `SourceAttempt` is persisted (without the full source URL, only what's
 needed to answer "why wasn't this created" - see the domain model's
 `SourceAttempt.FailureReason`, `DifferencePercentage`, etc.), independently of whether
-the overall episode ends up `Completed` or `Unavailable`. `Searching`/`Validating` are
-never committed on their own - see [ADR-011](adr/ADR-011-processing-restart-semantics.md)
-for why a crash mid-pipeline needs no separate recovery mechanism. Full module-boundary
-reasoning in [ADR-008](adr/ADR-008-media-processing-module-boundary.md), ffprobe
-process-safety and duration-tolerance rules in
-[ADR-009](adr/ADR-009-ffprobe-process-safety.md), `.strm` path/sanitization/atomicity
-rules in [ADR-010](adr/ADR-010-strm-filesystem-safety.md).
+the overall episode ends up `Completed` or `Unavailable`. Full module-boundary reasoning
+in [ADR-008](adr/ADR-008-media-processing-module-boundary.md), ffprobe process-safety
+and duration-tolerance rules in [ADR-009](adr/ADR-009-ffprobe-process-safety.md), `.strm`
+path/sanitization/atomicity rules in [ADR-010](adr/ADR-010-strm-filesystem-safety.md),
+claim/recovery/retry semantics in [ADR-013](adr/ADR-013-claim-and-recovery-semantics.md).
 
-There is still no `Scheduling` module - processing only happens when
-`POST /api/episodes/{id}/process` is called explicitly (manually, or by a future
-scheduler). `Movie` processing is not implemented (no `WriteMovieAsync` yet).
+`Movie` processing is still not implemented (no `WriteMovieAsync` yet).
+
+## Autonomous scheduling (implemented, Phase 4)
+
+```
+CatalogMaintenanceWorker (ticks Scheduling:MaintenanceInterval, default 60s)
+  -> RunCatalogMaintenanceCommand
+       1. GetScheduledDueAsync -> TryBecomeEligible(utcNow)     [Scheduled -> Pending]
+       2. GetRetryableAsync -> Retry(utcNow)                    [Unavailable/Error -> Pending, NextAttemptAtUtc due]
+       3. GetStaleProcessingAsync -> RecoverInterruptedProcessing(utcNow)  [stuck Searching/Validating -> Pending]
+       (one SaveChangesAsync for the three steps above)
+       4. GetDueForMetadataRefreshAsync -> RefreshSeriesMetadataCommand per series  [Active only]
+
+EpisodeProcessingWorker (ticks Scheduling:ProcessingInterval, default 15s)
+  -> GetPendingForProcessingAsync(BatchSize)
+  -> up to MaxConcurrentEpisodeProcessing concurrently (SemaphoreSlim):
+       ProcessEpisodeCommand   [the exact same pipeline POST /api/episodes/{id}/process uses]
+```
+
+Both are plain `BackgroundService`s following [ADR-003](adr/ADR-003-background-service-scheduler.md)'s
+`IServiceScopeFactory`-per-tick rule; neither touches `CatalogDbContext`, a repository, or
+`Episode.Status` directly - they only call the `Catalog.Application` use cases above.
+`Scheduling:Enabled=false` disables both without affecting the API, manual processing, or
+health checks. Full module-structure reasoning in
+[ADR-012](adr/ADR-012-scheduling-module-architecture.md); the claim (why two overlapping
+calls for the same episode can't both process it), stale-processing recovery, and
+retryable-error classification in
+[ADR-013](adr/ADR-013-claim-and-recovery-semantics.md).
+
+`GET /api/status`, `GET /api/episodes?status=`, and `POST /api/episodes/{id}/retry`
+(flips `Unavailable`/`Error` back to `Pending`, does not itself reprocess) round out the
+operational surface added in this phase.
 
 ## Persistence
 
@@ -205,7 +254,12 @@ Migrations so far: `InitialCreate` (Phase 1), `AddCatalogForeignKeys` (Phase 1.1
 (Phase 2, see [ADR-007](adr/ADR-007-metadata-provider-and-catalog-synchronization.md)),
 `AddSourceAttemptAndStrmFileForeignKeys` (Phase 3 - `SourceAttempt`/`StrmFile` now have
 FK constraints against `Episode`/`Movie`, `DeleteBehavior.Restrict`, consistent with
-ADR-005's convention).
+ADR-005's convention), `AddAutonomousSchedulingSupport` (Phase 4 - `Series.LastMetadataRefreshAtUtc`/
+`NextMetadataRefreshAtUtc` + an index; `Episode.UpdatedAtUtc` becoming an EF Core
+concurrency token produced no schema diff at all - see
+[ADR-013](adr/ADR-013-claim-and-recovery-semantics.md)). WAL mode and a SQLite
+busy-timeout were also enabled in Phase 4 - see
+[ADR-014](adr/ADR-014-sqlite-wal-and-busy-timeout.md).
 
 ## Incremental plan
 
@@ -220,10 +274,15 @@ ADR-005's convention).
    the Python backend's validated rules), `IStrmWriter` (atomic temp-file-then-rename
    writes, Jellyfin-compatible paths), driven explicitly via
    `POST /api/episodes/{id}/process` - no scheduler yet~~ (Phase 3 - this delivery)
-5. `Scheduling` module: `BackgroundService`s for `ReleaseProcessing` (Scheduled -> Pending)
-   and `RetryProcessing` (Unavailable/Error -> Pending), bounded concurrency
-   (`MaxConcurrentEpisodeProcessing`) - see [ADR-003](adr/ADR-003-background-service-scheduler.md)
-   for the `IServiceScopeFactory` pattern this must follow.
+5. ~~`Scheduling` module: `CatalogMaintenanceWorker` (release, retry, stale-processing
+   recovery, metadata-refresh scheduling) and `EpisodeProcessingWorker` (bounded-
+   concurrency processing), both `IServiceScopeFactory`-based per
+   [ADR-003](adr/ADR-003-background-service-scheduler.md); an optimistic-concurrency
+   claim (`Episode.UpdatedAtUtc`) so overlapping manual/automatic processing calls can't
+   double-process the same episode; `GET /api/status`,
+   `GET /api/episodes?status=`, `POST /api/episodes/{id}/retry`~~ (Phase 4 - this
+   delivery)
 6. Movie use cases mirroring the Episode metadata-sync and processing pipeline.
-7. Only after the above has test coverage equivalent to the current Python backend:
+7. A Jellyfin plugin / web UI, once there's something worth pointing them at.
+8. Only after the above has test coverage equivalent to the current Python backend:
    decommission the PowerShell/Python system (never before).

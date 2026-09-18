@@ -16,11 +16,19 @@ STRM Manager needs a scheduler for two jobs: promoting `Scheduled` episodes/movi
 
 ## Decision
 
-Use plain ASP.NET Core `BackgroundService` implementations (`ReleaseProcessing`,
-`RetryProcessing` - to be added in the `Scheduling` module), each on its own timer,
+Use plain ASP.NET Core `BackgroundService` implementations, each on its own timer,
 querying `IEpisodeRepository`/`IMovieRepository` for due work. No Hangfire, no Quartz, no
 persistent job store beyond the `Catalog` tables that already record `ReleaseAtUtc`/
 `NextAttemptAtUtc`/`AttemptCount`.
+
+**Implemented in Phase 4** (see [ADR-012](ADR-012-scheduling-module-architecture.md) for
+the full module-structure reasoning) as two workers rather than the
+`ReleaseProcessing`/`RetryProcessing` split originally sketched here:
+`CatalogMaintenanceWorker` (release + retry + stale-processing recovery + metadata-
+refresh scheduling, one shared cheap-query cadence) and `EpisodeProcessingWorker` (the
+actual FrostStream/ffprobe work, its own cadence and concurrency bound). The
+`IServiceScopeFactory` rule below held exactly as written - both workers follow it
+without modification.
 
 Concurrency is bounded explicitly (a configurable `MaxConcurrentEpisodeProcessing`, via
 `SemaphoreSlim` or `Channel<T>` - whichever turns out simplest once the processing

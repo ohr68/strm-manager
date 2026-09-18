@@ -19,9 +19,12 @@ metadata from Cinemeta and persists/refreshes its Series/Season/Episode graph
 idempotently. Phase 3 added the media processing pipeline: `POST /api/episodes/{id}/process`
 finds candidate streams (FrostStream), validates each with `ffprobe` (duration tolerance,
 codec checks), and writes the first approved candidate to a Jellyfin-compatible `.strm`
-file. Processing is explicit/on-demand only - there is still no scheduler, so nothing
-runs automatically yet; see [docs/architecture.md](docs/architecture.md) for the full
-plan.
+file. Phase 4 made the service autonomous: once a series is added, STRM Manager needs no
+further manual intervention for normal operation - `Scheduling`'s two background workers
+promote released episodes, discover and process `Pending` episodes, retry due
+`Unavailable`/retryable `Error` episodes, recover interrupted processing runs, and
+periodically refresh Series metadata to discover newly announced episodes. See
+[docs/architecture.md](docs/architecture.md) for the full plan.
 
 ## Architecture
 
@@ -37,12 +40,12 @@ other through public interfaces registered in DI, never through internal types.
                             |
                     STRM Manager Server
                             |
-        +-------------------+
-        |                   |
-     Catalog             MediaProcessing
- (Series/Season/     (FrostStream discovery/
-  Episode/Movie,       ffprobe validation/
-  + metadata sync)        .strm writing)
+        +-------------------+-------------------+
+        |                   |                    |
+     Catalog             MediaProcessing      Scheduling
+ (Series/Season/     (FrostStream discovery/  (autonomous
+  Episode/Movie,       ffprobe validation/     release/retry/
+  + metadata sync)        .strm writing)        recovery/refresh)
 ```
 
 See [docs/architecture.md](docs/architecture.md) for the dependency diagram, the Episode
@@ -58,12 +61,16 @@ enough to live inside `Catalog` (`Catalog.Application/Metadata/`,
 [ADR-007](docs/adr/ADR-007-metadata-provider-and-catalog-synchronization.md).
 `MediaProcessing` similarly gets only `Application`/`Infrastructure` projects (no
 `Domain`/`Presentation`) - see [ADR-008](docs/adr/ADR-008-media-processing-module-boundary.md).
+`Scheduling` goes one step further still: a single `Infrastructure` project, no
+`Application` at all - its `BackgroundService`s are thin callers into `Catalog.Application`
+use cases, never a place for new business logic. See
+[ADR-012](docs/adr/ADR-012-scheduling-module-architecture.md).
 
 | Module | Status | Responsibility |
 |---|---|---|
-| `Catalog` | Implemented | Series, Season, Episode, Movie, SourceAttempt, StrmFile, plus metadata retrieval (`IMetadataProvider`/Cinemeta), synchronization (`CatalogSynchronizer`), and the `ProcessEpisode` orchestrator. |
+| `Catalog` | Implemented | Series, Season, Episode, Movie, SourceAttempt, StrmFile, plus metadata retrieval (`IMetadataProvider`/Cinemeta), synchronization (`CatalogSynchronizer`), the `ProcessEpisode` orchestrator, and `RunCatalogMaintenanceCommand`. |
 | `MediaProcessing` | Implemented (episodes only) | `IStreamProvider` (FrostStream), `IMediaValidator` (ffprobe), `IStrmWriter` (`.strm` writing). No movie support yet. |
-| `Scheduling` | Planned | `BackgroundService`s for release processing and retries - processing today is explicit/on-demand only. |
+| `Scheduling` | Implemented | `CatalogMaintenanceWorker` (release/retry/stale-recovery/metadata-refresh) and `EpisodeProcessingWorker` (bounded-concurrency processing) - both `BackgroundService`s calling existing `Catalog.Application` use cases. |
 
 ## Stack
 
@@ -112,8 +119,20 @@ curl http://localhost:5221/api/seasons/{seasonId}/episodes
 curl -X POST http://localhost:5221/api/series/{id}/refresh
 
 # Process one episode once it's Pending (finds a stream, validates it with ffprobe,
-# writes a .strm file):
+# writes a .strm file) - the Scheduling workers do this automatically too, this is for
+# manual/debug use:
 curl -X POST http://localhost:5221/api/episodes/{episodeId}/process
+
+# Retry an Unavailable/Error episode manually (returns it to Pending; the next
+# processing pass - manual or worker - picks it up):
+curl -X POST http://localhost:5221/api/episodes/{episodeId}/retry
+
+# Operational overview: episode status counts, series active/refresh-due counts,
+# whether the scheduler is enabled:
+curl http://localhost:5221/api/status
+
+# List episodes by status, paginated:
+curl "http://localhost:5221/api/episodes?status=Unavailable&page=1&pageSize=50"
 ```
 
 ## Configuration
@@ -182,9 +201,52 @@ rules ffprobe validation applies - never both at once, see
 files are written (mounted as the `/stream` Docker volume in production); see
 [ADR-010](docs/adr/ADR-010-strm-filesystem-safety.md) for the path/sanitization rules.
 
-`Processing:UnavailableRetryDelay` (default `06:00:00`) controls how far in the future
-`NextAttemptAtUtc` is set when an episode is marked `Unavailable` - informational only in
-this phase, since nothing yet reads it automatically (no scheduler).
+Processing business rules (Catalog-owned, not Scheduling's - see
+[ADR-012](docs/adr/ADR-012-scheduling-module-architecture.md)) and metadata refresh
+cadence:
+
+```json
+{
+  "Processing": {
+    "UnavailableRetryDelay": "06:00:00",
+    "RetryableErrorDelay": "00:15:00",
+    "StaleProcessingThreshold": "00:15:00"
+  },
+  "Metadata": {
+    "Refresh": {
+      "ActiveSeriesRefreshInterval": "06:00:00"
+    }
+  }
+}
+```
+
+`UnavailableRetryDelay`/`RetryableErrorDelay` set `NextAttemptAtUtc` when an episode
+becomes `Unavailable`/retryable-`Error`; `StaleProcessingThreshold` is how long a
+`Searching`/`Validating` episode may sit before the maintenance worker treats it as an
+interrupted run and recovers it to `Pending`; `ActiveSeriesRefreshInterval` is how often
+an `Active` series' metadata is automatically re-synced (`Ended` series are never
+auto-refreshed). See [ADR-013](docs/adr/ADR-013-claim-and-recovery-semantics.md).
+
+Scheduling itself (purely operational - how often the workers wake up, how much they do
+per tick):
+
+```json
+{
+  "Scheduling": {
+    "Enabled": true,
+    "MaintenanceInterval": "00:01:00",
+    "ProcessingInterval": "00:00:15",
+    "MaxConcurrentEpisodeProcessing": 2,
+    "BatchSize": 10
+  }
+}
+```
+
+`Scheduling:Enabled=false` disables both background workers without affecting the API,
+manual processing, or health checks - useful for debugging, migration, or troubleshooting.
+`MaxConcurrentEpisodeProcessing` defaults conservatively (2) since the host typically
+also runs Jellyfin and other services and each concurrent episode means a live FrostStream
+call and/or ffprobe process.
 
 ## Database & migrations
 
@@ -221,10 +283,15 @@ dotnet test
   installed at all), and `FileSystemStrmWriter` path/sanitization/atomicity behavior.
 - `test/StrmManager.Modules.Catalog.IntegrationTests` - API + SQLite, via `WebApplicationFactory`,
   including the full add/refresh/discover-new-episode flow against a `FakeMetadataProvider`,
-  and the full `POST /api/episodes/{id}/process` flow against
-  `FakeStreamProvider`/`FakeMediaValidator` and a temp `.strm` root
-  (`ApiWebApplicationFactory` registers all three fakes by default for every test in this
-  project - no test ever hits live Cinemeta/FrostStream or spawns a real ffprobe process).
+  the full `POST /api/episodes/{id}/process` flow against
+  `FakeStreamProvider`/`FakeMediaValidator` and a temp `.strm` root, `RunCatalogMaintenanceCommand`
+  driven by a `FakeTimeProvider` (release/retry/stale-recovery/metadata-refresh boundaries,
+  including the full "future episode releases, gets discovered, processes to Completed"
+  scenario), a real concurrent-request race proving the claim prevents double-processing,
+  and `GET /api/status`/`POST /api/episodes/{id}/retry`
+  (`ApiWebApplicationFactory` registers all fakes and `Scheduling:Enabled=false` by default
+  for every test in this project - no test ever hits live Cinemeta/FrostStream, spawns a
+  real ffprobe process, or races a live background worker).
 - `test/StrmManager.ArchitectureTests` - layering rules (Domain -> Application -> Infrastructure/Presentation) and module boundaries (`Catalog` <-> `MediaProcessing`), enforced with NetArchTest.
 
 ## Docker
@@ -251,15 +318,18 @@ scan point is.
 | POST | `/api/series/{id}/refresh` | Re-syncs a series against the metadata provider; idempotent, preserves `Completed`/`Unavailable` episode state. |
 | GET | `/api/series/{id}/seasons` | Lists a series' seasons. |
 | GET | `/api/seasons/{id}/episodes` | Lists a season's episodes. |
-| POST | `/api/episodes/{id}/process` | Runs the processing pipeline for one episode (find streams, validate, write `.strm`); idempotent if already `Completed`; 409 Conflict if not yet eligible (e.g. still `Scheduled`). |
+| POST | `/api/episodes/{id}/process` | Runs the processing pipeline for one episode (find streams, validate, write `.strm`); idempotent if already `Completed`; 409 Conflict if not yet eligible (e.g. still `Scheduled`) or already being processed by another request. Also called automatically by `EpisodeProcessingWorker`. |
+| POST | `/api/episodes/{id}/retry` | Returns an `Unavailable`/`Error` episode to `Pending`; does not reprocess synchronously - the next processing pass (manual or worker) picks it up. |
+| GET | `/api/episodes?status=&page=&pageSize=` | Lists episodes, optionally filtered by status, paginated. |
+| GET | `/api/status` | Operational overview: episode status counts, series active/metadata-refresh-due counts, whether the scheduler is enabled. Never includes stream URLs. |
 
 `GET /api/series/{id}` intentionally does not return the full season/episode graph by
 default (it can get large) - use the dedicated seasons/episodes endpoints. Response
 bodies never include the underlying stream URL - only the selected source's provider
 name and the resulting `.strm` path.
 
-More endpoints (movies, retry, status) will be added as the corresponding use cases and
-modules are implemented - see [docs/architecture.md](docs/architecture.md#incremental-plan).
+Movie endpoints will be added once movie processing is implemented - see
+[docs/architecture.md](docs/architecture.md#incremental-plan).
 
 ## Related projects
 

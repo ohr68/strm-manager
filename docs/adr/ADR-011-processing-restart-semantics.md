@@ -2,6 +2,16 @@
 
 ## Status
 
+Superseded by [ADR-013](ADR-013-claim-and-recovery-semantics.md) - Phase 4's claim
+requirement means Searching/Validating are now persisted immediately (not held in
+memory only, as this ADR describes). The single-instance, no-scheduler premise this ADR
+was written under no longer holds once a background worker exists. Left in place,
+unedited, as the historical record of Phase 3's reasoning - the "why not persist
+intermediate states" analysis below was correct for Phase 3's constraints and is worth
+keeping for context on what changed and why.
+
+## Original status (Phase 3)
+
 Accepted
 
 ## Context
