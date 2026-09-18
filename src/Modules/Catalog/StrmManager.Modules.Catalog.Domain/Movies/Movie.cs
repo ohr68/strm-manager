@@ -130,7 +130,15 @@ public sealed class Movie : Entity
         return Result.Success();
     }
 
-    public Result MarkError(DateTime utcNow, string error)
+    /// <summary>
+    /// <paramref name="nextAttemptAtUtc"/> is the sole retryability signal - a non-null
+    /// value means this failure is eligible for automatic retry, null means it stays Error
+    /// until a manual retry. Always assigned explicitly (never left as whatever the loaded
+    /// entity already had) so a stale value from a prior Unavailable/Error cycle can never
+    /// leak through and make a non-retryable failure look retryable. Same contract as
+    /// Episode.MarkError - see ADR-013.
+    /// </summary>
+    public Result MarkError(DateTime utcNow, string error, DateTime? nextAttemptAtUtc = null)
     {
         if (Status is MediaStatus.Completed)
         {
@@ -140,7 +148,28 @@ public sealed class Movie : Entity
         Status = MediaStatus.Error;
         LastAttemptAtUtc = utcNow;
         AttemptCount++;
+        NextAttemptAtUtc = nextAttemptAtUtc;
         LastError = error;
+        UpdatedAtUtc = utcNow;
+        return Result.Success();
+    }
+
+    /// <summary>
+    /// Recovers a movie left in Searching/Validating by an interrupted processing run
+    /// (crash, restart, cancelled shutdown) back to Pending. Deliberately not the same as
+    /// MarkUnavailable/MarkError - an interrupted run reached no outcome, so AttemptCount,
+    /// LastAttemptAtUtc and LastError are left untouched. Mirrors
+    /// Episode.RecoverInterruptedProcessing - see ADR-013.
+    /// </summary>
+    public Result RecoverInterruptedProcessing(DateTime utcNow)
+    {
+        if (Status is not (MediaStatus.Searching or MediaStatus.Validating))
+        {
+            return Result.Failure(MediaErrors.InvalidTransition(nameof(Movie), Status, MediaStatus.Pending));
+        }
+
+        Status = MediaStatus.Pending;
+        NextAttemptAtUtc = null;
         UpdatedAtUtc = utcNow;
         return Result.Success();
     }

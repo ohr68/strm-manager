@@ -16,6 +16,14 @@ internal sealed class MovieConfiguration : IEntityTypeConfiguration<Movie>
         builder.Property(movie => movie.Status).HasConversion<string>().HasMaxLength(32);
         builder.Property(movie => movie.LastError).HasMaxLength(2048);
 
+        // UpdatedAtUtc doubles as an application-managed optimistic-concurrency token
+        // (SQLite has no native rowversion type), exactly as for Episode - it is what lets
+        // a Pending -> Searching claim followed by IUnitOfWork.TrySaveChangesAsync reject a
+        // second, overlapping claim of the same movie instead of both callers proceeding.
+        // See ADR-013. No new column - the field already existed and is updated on every
+        // transition.
+        builder.Property(movie => movie.UpdatedAtUtc).IsConcurrencyToken();
+
         builder.OwnsOne(movie => movie.ExternalIds, ownedBuilder =>
         {
             ownedBuilder.Property(externalIds => externalIds.ImdbId).HasColumnName("imdb_id").HasMaxLength(32);
