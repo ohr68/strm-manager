@@ -14,6 +14,8 @@ COPY src/Modules/Catalog/StrmManager.Modules.Catalog.Domain/StrmManager.Modules.
 COPY src/Modules/Catalog/StrmManager.Modules.Catalog.Application/StrmManager.Modules.Catalog.Application.csproj src/Modules/Catalog/StrmManager.Modules.Catalog.Application/
 COPY src/Modules/Catalog/StrmManager.Modules.Catalog.Infrastructure/StrmManager.Modules.Catalog.Infrastructure.csproj src/Modules/Catalog/StrmManager.Modules.Catalog.Infrastructure/
 COPY src/Modules/Catalog/StrmManager.Modules.Catalog.Presentation/StrmManager.Modules.Catalog.Presentation.csproj src/Modules/Catalog/StrmManager.Modules.Catalog.Presentation/
+COPY src/Modules/MediaProcessing/StrmManager.Modules.MediaProcessing.Application/StrmManager.Modules.MediaProcessing.Application.csproj src/Modules/MediaProcessing/StrmManager.Modules.MediaProcessing.Application/
+COPY src/Modules/MediaProcessing/StrmManager.Modules.MediaProcessing.Infrastructure/StrmManager.Modules.MediaProcessing.Infrastructure.csproj src/Modules/MediaProcessing/StrmManager.Modules.MediaProcessing.Infrastructure/
 
 RUN dotnet restore src/Api/StrmManager.Api/StrmManager.Api.csproj
 
@@ -27,8 +29,13 @@ RUN dotnet publish src/Api/StrmManager.Api/StrmManager.Api.csproj \
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
 WORKDIR /app
 
-# ffprobe/ffmpeg are not installed yet - the FfprobeMediaValidator (MediaProcessing
-# module) has not landed. Add `apt-get install -y ffmpeg` here once it does.
+# Debian's ffmpeg package bundles the ffprobe binary FfprobeMediaValidator
+# (MediaProcessing module) shells out to for media validation - installed before
+# switching to the non-root `app` user, and the apt lists are dropped afterward to
+# keep the layer small.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
 
 RUN mkdir -p /app/data /stream && chown -R app:app /app/data /stream
 USER app
