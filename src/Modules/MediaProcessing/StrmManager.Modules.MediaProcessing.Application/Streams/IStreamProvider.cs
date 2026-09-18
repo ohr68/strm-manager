@@ -13,4 +13,13 @@ public interface IStreamProvider
     Task<Result<IReadOnlyList<StreamCandidate>>> GetEpisodeStreamsAsync(
         EpisodeStreamReference reference,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Same contract as <see cref="GetEpisodeStreamsAsync"/>, for a movie identified by its
+    /// IMDb id: an empty successful list means "no candidates right now", and only genuine
+    /// technical failures are a Result.Failure.
+    /// </summary>
+    Task<Result<IReadOnlyList<StreamCandidate>>> GetMovieStreamsAsync(
+        MovieStreamReference reference,
+        CancellationToken cancellationToken = default);
 }

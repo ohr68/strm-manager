@@ -20,11 +20,14 @@ using static StrmManager.Modules.Catalog.IntegrationTests.Processing.ProcessMovi
 namespace StrmManager.Modules.Catalog.IntegrationTests.Processing;
 
 /// <summary>
-/// Phase 6.2b: POST /api/movies/{id}/process claims an eligible Movie (Pending ->
-/// Searching, persisted through the concurrency-aware save) and stops there - provider
-/// discovery, validation and STRM generation are later phases. Every test also proves the
-/// stream provider and media validator were never touched. "Now" is a FakeTimeProvider and
-/// every movie is seeded before it, so claims visibly move the concurrency token.
+/// Eligibility and claim behavior of POST /api/movies/{id}/process (Phase 6.2b, carried
+/// forward): only a Pending movie is claimed (Pending -> Searching, persisted through the
+/// concurrency-aware save) - everything else is refused BEFORE any external call, and every
+/// refusal test proves the stream provider and media validator were never touched. Tests
+/// where a claim IS made observe the database from inside the provider call, i.e. at the
+/// moment the first external call happens (6.2c: the provider now runs after the claim).
+/// "Now" is a FakeTimeProvider and every movie is seeded before it, so claims visibly move
+/// the concurrency token. What the provider/validation outcomes do is ProcessMovieDiscoveryTests.
 /// </summary>
 public class ProcessMovieTests : IClassFixture<ApiWebApplicationFactory>
 {
@@ -32,14 +35,23 @@ public class ProcessMovieTests : IClassFixture<ApiWebApplicationFactory>
     private readonly IServiceProvider _services;
     private int _externalCalls;
 
+    /// <summary>Runs inside the provider call, after it has been counted - to observe or hold it.</summary>
+    private Func<MovieStreamReference, Task>? _onProviderCall;
+
     public ProcessMovieTests(ApiWebApplicationFactory factory)
     {
         var streamProvider = new FakeStreamProvider
         {
-            Handler = _ =>
+            MovieHandlerAsync = async (reference, _) =>
             {
                 Interlocked.Increment(ref _externalCalls);
-                return Result.Success<IReadOnlyList<StreamCandidate>>([]);
+
+                if (_onProviderCall is { } onProviderCall)
+                {
+                    await onProviderCall(reference);
+                }
+
+                return Result.Success<IReadOnlyList<StreamCandidate>>([]); // no candidates: the run ends Unavailable
             },
         };
         var mediaValidator = new FakeMediaValidator
@@ -47,7 +59,7 @@ public class ProcessMovieTests : IClassFixture<ApiWebApplicationFactory>
             Handler = (_, _) =>
             {
                 Interlocked.Increment(ref _externalCalls);
-                return MediaValidationResult.ForRejection(SourceAttemptResult.Rejected, "must not be called in 6.2b");
+                return MediaValidationResult.ForRejection(SourceAttemptResult.Rejected, "unused: the provider returns no candidates");
             },
         };
 
@@ -80,9 +92,16 @@ public class ProcessMovieTests : IClassFixture<ApiWebApplicationFactory>
     // --- A. Claim ---
 
     [Fact]
-    public async Task ProcessMovie_PendingMovie_IsClaimedAndPersistedAsSearching()
+    public async Task ProcessMovie_PendingMovie_IsClaimedAndTheClaimIsPersistedBeforeTheProviderIsCalled()
     {
         Guid movieId = await SeedMovieAsync(_services, MediaStatus.Pending);
+        Movie? persistedWhenProviderCalled = null;
+        MovieStreamReference? referenceGiven = null;
+        _onProviderCall = async reference =>
+        {
+            referenceGiven = reference;
+            persistedWhenProviderCalled = await LoadMovieAsync(_services, movieId); // an independent connection
+        };
 
         HttpResponseMessage response = await ProcessAsync(movieId);
 
@@ -90,17 +109,23 @@ public class ProcessMovieTests : IClassFixture<ApiWebApplicationFactory>
         ProcessMovieResponse? body = await response.Content.ReadFromJsonAsync<ProcessMovieResponse>();
         Assert.NotNull(body);
         Assert.Equal(movieId, body.MovieId);
-        Assert.Equal("Searching", body.Status);
-        Assert.Equal(0, body.Attempts); // a claim is not an attempt - nothing has been tried yet
+        Assert.Equal("Unavailable", body.Status); // the (empty) provider answer decided the outcome
+        Assert.Equal(0, body.Attempts); // no candidate was ever evaluated
         Assert.Null(body.StrmPath);
 
-        Movie persisted = await LoadMovieAsync(_services, movieId);
-        Assert.Equal(MediaStatus.Searching, persisted.Status);
-        Assert.Equal(Now, persisted.UpdatedAtUtc); // the concurrency token moved with the claim
-        Assert.Equal(0, persisted.AttemptCount);
-        Assert.Null(persisted.LastAttemptAtUtc);
+        // When the provider was called - the first external call - the claim was already
+        // durable, visible to another connection: Searching, token moved, nothing attempted.
+        Assert.NotNull(persistedWhenProviderCalled);
+        Assert.Equal(MediaStatus.Searching, persistedWhenProviderCalled.Status);
+        Assert.Equal(Now, persistedWhenProviderCalled.UpdatedAtUtc);
+        Assert.Equal(0, persistedWhenProviderCalled.AttemptCount);
+        Assert.Null(persistedWhenProviderCalled.LastAttemptAtUtc);
 
-        AssertNoExternalCalls();
+        // ...and it was asked about THIS movie, by IMDb id, with the movie's own metadata.
+        Movie seeded = await LoadMovieAsync(_services, movieId);
+        Assert.Equal(new MovieStreamReference(seeded.ExternalIds.ImdbId!, "Process Movie Test", 2025, TimeSpan.FromMinutes(100)), referenceGiven);
+
+        Assert.Equal(1, Volatile.Read(ref _externalCalls));
         await AssertNothingProducedAsync(movieId);
     }
 
@@ -116,17 +141,29 @@ public class ProcessMovieTests : IClassFixture<ApiWebApplicationFactory>
     }
 
     [Fact]
-    public async Task ProcessMovie_ClaimedMovieProcessedAgain_IsRejectedAndNotClaimedTwice()
+    public async Task ProcessMovie_SecondRequestWhileTheFirstIsInsideTheProviderCall_IsRejectedAndNotClaimedTwice()
     {
         Guid movieId = await SeedMovieAsync(_services, MediaStatus.Pending);
-        Assert.Equal(HttpStatusCode.OK, (await ProcessAsync(movieId)).StatusCode);
+        var providerEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseProvider = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _onProviderCall = async _ =>
+        {
+            providerEntered.TrySetResult();
+            await releaseProvider.Task;
+        };
+
+        Task<HttpResponseMessage> first = ProcessAsync(movieId);
+        await providerEntered.Task.WaitAsync(TimeSpan.FromSeconds(15)); // the first request holds the claim, mid-lookup
 
         HttpResponseMessage second = await ProcessAsync(movieId);
 
         Assert.Equal(HttpStatusCode.Conflict, second.StatusCode);
         ProblemResponse? problem = await second.Content.ReadFromJsonAsync<ProblemResponse>();
         Assert.Equal("Movies.AlreadyBeingProcessed", problem?.Title);
-        AssertNoExternalCalls();
+        Assert.Equal(1, Volatile.Read(ref _externalCalls)); // only the first request ever called the provider
+
+        releaseProvider.SetResult();
+        Assert.Equal(HttpStatusCode.OK, (await first).StatusCode);
     }
 
     // --- E. Already processing ---
@@ -206,14 +243,20 @@ public class ProcessMovieTests : IClassFixture<ApiWebApplicationFactory>
             await scope.ServiceProvider.GetRequiredService<IUnitOfWork>().SaveChangesAsync();
         }
 
+        Movie? persistedWhenProviderCalled = null;
+        _onProviderCall = async _ => persistedWhenProviderCalled = await LoadMovieAsync(_services, movieId);
+
         HttpResponseMessage response = await ProcessAsync(movieId);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Movie persisted = await LoadMovieAsync(_services, movieId);
-        Assert.Equal(MediaStatus.Searching, persisted.Status);
-        Assert.Equal(1, persisted.AttemptCount); // the earlier attempt is history, not reset
-        Assert.Null(persisted.NextAttemptAtUtc); // Retry cleared it; claiming does not resurrect it
-        AssertNoExternalCalls();
+
+        // The claim (visible when the provider was called) kept the attempt history and did
+        // not resurrect the retry schedule Retry() cleared.
+        Assert.NotNull(persistedWhenProviderCalled);
+        Assert.Equal(MediaStatus.Searching, persistedWhenProviderCalled.Status);
+        Assert.Equal(1, persistedWhenProviderCalled.AttemptCount); // the earlier attempt is history, not reset
+        Assert.Null(persistedWhenProviderCalled.NextAttemptAtUtc);
+        Assert.Equal(1, Volatile.Read(ref _externalCalls));
     }
 
     [Theory]
@@ -273,12 +316,17 @@ public class ProcessMovieTests : IClassFixture<ApiWebApplicationFactory>
         Assert.Null(recovered.NextAttemptAtUtc);
         Assert.Equal(0, recovered.AttemptCount); // an interrupted run reached no outcome
 
+        AssertNoExternalCalls(); // the refused request above never reached the provider
+
+        Movie? persistedWhenProviderCalled = null;
+        _onProviderCall = async _ => persistedWhenProviderCalled = await LoadMovieAsync(_services, movieId);
+
         HttpResponseMessage response = await ProcessAsync(movieId);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Movie reclaimed = await LoadMovieAsync(_services, movieId);
-        Assert.Equal(MediaStatus.Searching, reclaimed.Status);
-        Assert.Equal(Now, reclaimed.UpdatedAtUtc);
-        AssertNoExternalCalls();
+        Assert.NotNull(persistedWhenProviderCalled);
+        Assert.Equal(MediaStatus.Searching, persistedWhenProviderCalled.Status); // freshly claimed again
+        Assert.Equal(Now, persistedWhenProviderCalled.UpdatedAtUtc);
+        Assert.Equal(1, Volatile.Read(ref _externalCalls));
     }
 }

@@ -10,7 +10,8 @@ namespace StrmManager.Modules.MediaProcessing.Infrastructure.Streams.FrostStream
 
 /// <summary>
 /// Uses only the normal, public Stremio-compatible HTTP interface already validated by
-/// the legacy prototype (GET /stream/series/{episodeId}.json) - no cookie extraction, no
+/// the legacy prototype (GET /stream/series/{episodeId}.json, and the same convention's
+/// GET /stream/movie/{imdbId}.json for movies) - no cookie extraction, no
 /// captured sessions, no anti-bot bypass. See ADR-008.
 /// </summary>
 internal sealed partial class FrostStreamProvider(HttpClient httpClient, ILogger<FrostStreamProvider> logger)
@@ -20,9 +21,23 @@ internal sealed partial class FrostStreamProvider(HttpClient httpClient, ILogger
 
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
 
-    public async Task<Result<IReadOnlyList<StreamCandidate>>> GetEpisodeStreamsAsync(
+    public Task<Result<IReadOnlyList<StreamCandidate>>> GetEpisodeStreamsAsync(
         EpisodeStreamReference reference,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        GetStreamsAsync("series", reference.ExternalId, cancellationToken);
+
+    public Task<Result<IReadOnlyList<StreamCandidate>>> GetMovieStreamsAsync(
+        MovieStreamReference reference,
+        CancellationToken cancellationToken = default) =>
+        GetStreamsAsync("movie", reference.ImdbId, cancellationToken);
+
+    // One request/error-handling path for both media types - the Stremio endpoint differs
+    // only in its type segment (/stream/series/... vs /stream/movie/...), so the same
+    // client, resilience pipeline, DTOs, mapper and error taxonomy serve both.
+    private async Task<Result<IReadOnlyList<StreamCandidate>>> GetStreamsAsync(
+        string mediaType,
+        string externalId,
+        CancellationToken cancellationToken)
     {
         Stopwatch stopwatch = Stopwatch.StartNew();
 
@@ -30,15 +45,15 @@ internal sealed partial class FrostStreamProvider(HttpClient httpClient, ILogger
         {
             // Uri.EscapeDataString handles the colon-delimited episode id (e.g.
             // "tt27497393:1:8" -> "tt27497393%3A1%3A8") - never hand-built/concatenated.
-            string escapedId = Uri.EscapeDataString(reference.ExternalId);
+            string escapedId = Uri.EscapeDataString(externalId);
 
             using HttpResponseMessage response = await httpClient.GetAsync(
-                $"stream/series/{escapedId}.json",
+                $"stream/{mediaType}/{escapedId}.json",
                 cancellationToken);
 
             if (!response.IsSuccessStatusCode)
             {
-                LogUnexpectedStatus(logger, reference.ExternalId, (int)response.StatusCode, stopwatch.ElapsedMilliseconds);
+                LogUnexpectedStatus(logger, externalId, (int)response.StatusCode, stopwatch.ElapsedMilliseconds);
                 return Result.Failure<IReadOnlyList<StreamCandidate>>(StreamProviderErrors.ProviderUnavailable(ProviderName));
             }
 
@@ -48,34 +63,34 @@ internal sealed partial class FrostStreamProvider(HttpClient httpClient, ILogger
 
             if (payload is null)
             {
-                LogInvalidResponse(logger, reference.ExternalId, "empty response body");
+                LogInvalidResponse(logger, externalId, "empty response body");
                 return Result.Failure<IReadOnlyList<StreamCandidate>>(StreamProviderErrors.InvalidResponse(ProviderName, "empty response body"));
             }
 
             IReadOnlyList<StreamCandidate> candidates = FrostStreamMapper.Map(payload);
 
-            LogStreamsRetrieved(logger, reference.ExternalId, candidates.Count, stopwatch.ElapsedMilliseconds);
+            LogStreamsRetrieved(logger, externalId, candidates.Count, stopwatch.ElapsedMilliseconds);
 
             return Result.Success(candidates);
         }
         catch (TimeoutRejectedException)
         {
-            LogTimeout(logger, reference.ExternalId, stopwatch.ElapsedMilliseconds);
+            LogTimeout(logger, externalId, stopwatch.ElapsedMilliseconds);
             return Result.Failure<IReadOnlyList<StreamCandidate>>(StreamProviderErrors.Timeout(ProviderName));
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            LogTimeout(logger, reference.ExternalId, stopwatch.ElapsedMilliseconds);
+            LogTimeout(logger, externalId, stopwatch.ElapsedMilliseconds);
             return Result.Failure<IReadOnlyList<StreamCandidate>>(StreamProviderErrors.Timeout(ProviderName));
         }
         catch (HttpRequestException exception)
         {
-            LogProviderUnreachable(logger, reference.ExternalId, exception.Message);
+            LogProviderUnreachable(logger, externalId, exception.Message);
             return Result.Failure<IReadOnlyList<StreamCandidate>>(StreamProviderErrors.ProviderUnavailable(ProviderName));
         }
         catch (JsonException exception)
         {
-            LogInvalidResponse(logger, reference.ExternalId, exception.Message);
+            LogInvalidResponse(logger, externalId, exception.Message);
             return Result.Failure<IReadOnlyList<StreamCandidate>>(StreamProviderErrors.InvalidResponse(ProviderName, "malformed JSON"));
         }
     }

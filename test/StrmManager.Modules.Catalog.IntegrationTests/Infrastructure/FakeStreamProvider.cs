@@ -17,4 +17,20 @@ public sealed class FakeStreamProvider : IStreamProvider
     public Task<Result<IReadOnlyList<StreamCandidate>>> GetEpisodeStreamsAsync(
         EpisodeStreamReference reference, CancellationToken cancellationToken = default) =>
         Task.FromResult(Handler(reference));
+
+    /// <summary>Movie lookups - same safe "no candidates" default as <see cref="Handler"/>.</summary>
+    public Func<MovieStreamReference, Result<IReadOnlyList<StreamCandidate>>> MovieHandler { get; set; } =
+        _ => Result.Success<IReadOnlyList<StreamCandidate>>([]);
+
+    /// <summary>
+    /// When set, used instead of <see cref="MovieHandler"/> - for tests that must hold a
+    /// lookup "in flight" (await a signal) while something else happens.
+    /// </summary>
+    public Func<MovieStreamReference, CancellationToken, Task<Result<IReadOnlyList<StreamCandidate>>>>? MovieHandlerAsync { get; set; }
+
+    public Task<Result<IReadOnlyList<StreamCandidate>>> GetMovieStreamsAsync(
+        MovieStreamReference reference, CancellationToken cancellationToken = default) =>
+        MovieHandlerAsync is { } asyncHandler
+            ? asyncHandler(reference, cancellationToken)
+            : Task.FromResult(MovieHandler(reference));
 }

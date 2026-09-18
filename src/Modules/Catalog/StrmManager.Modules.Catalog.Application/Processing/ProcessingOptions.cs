@@ -3,9 +3,10 @@ using System.ComponentModel.DataAnnotations;
 namespace StrmManager.Modules.Catalog.Application.Processing;
 
 /// <summary>
-/// Consumed directly by ProcessEpisodeCommandHandler/RunCatalogMaintenanceCommandHandler
-/// (Application layer) rather than by an Infrastructure implementation - these are
-/// business-rule numbers about the Episode processing pipeline itself (how long to wait
+/// Consumed directly by ProcessEpisodeCommandHandler/ProcessMovieCommandHandler/
+/// RunCatalogMaintenanceCommandHandler (Application layer) rather than by an
+/// Infrastructure implementation - these are
+/// business-rule numbers about the media processing pipeline itself (how long to wait
 /// before retrying, how long a stuck run is considered abandoned), not the Scheduling
 /// module's own operational polling cadence (see ADR-012/ADR-013 - Scheduling's own
 /// SchedulingOptions holds only "how often does the poller wake up", nothing about

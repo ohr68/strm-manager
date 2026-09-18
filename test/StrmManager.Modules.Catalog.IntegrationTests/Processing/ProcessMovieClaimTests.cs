@@ -21,11 +21,12 @@ using static StrmManager.Modules.Catalog.IntegrationTests.Processing.ProcessMovi
 namespace StrmManager.Modules.Catalog.IntegrationTests.Processing;
 
 /// <summary>
-/// Phase 6.2b's critical invariant: a Movie is claimed, and the claim is PERSISTED through
-/// the concurrency-aware save, before any external work can happen - and a request that
-/// loses the claim race ends cleanly without going on. Races are forced deterministically
-/// (a hook between "movie loaded" and "claim saved"), and a spying IUnitOfWork records
-/// exactly what the handler saved and what the database held at that moment.
+/// The critical invariant (Phase 6.2b, unchanged by 6.2c): a Movie is claimed, and the claim
+/// is PERSISTED through the concurrency-aware save, before ANY external provider call - and
+/// a request that loses the claim race ends cleanly without ever calling the provider.
+/// Races are forced deterministically (a hook between "movie loaded" and "claim saved"), and
+/// a spying IUnitOfWork plus the fakes' own "external:*" events give one ordered log of what
+/// happened, in what order.
 /// </summary>
 public class ProcessMovieClaimTests : IClassFixture<ApiWebApplicationFactory>
 {
@@ -40,10 +41,10 @@ public class ProcessMovieClaimTests : IClassFixture<ApiWebApplicationFactory>
     {
         var streamProvider = new FakeStreamProvider
         {
-            Handler = _ =>
+            MovieHandler = _ =>
             {
                 _events.Enqueue("external:stream-provider");
-                return Result.Success<IReadOnlyList<StreamCandidate>>([]);
+                return Result.Success<IReadOnlyList<StreamCandidate>>([]); // "no candidates" - the run ends Unavailable
             },
         };
         var mediaValidator = new FakeMediaValidator
@@ -51,7 +52,7 @@ public class ProcessMovieClaimTests : IClassFixture<ApiWebApplicationFactory>
             Handler = (_, _) =>
             {
                 _events.Enqueue("external:media-validator");
-                return MediaValidationResult.ForRejection(SourceAttemptResult.Rejected, "must not be called in 6.2b");
+                return MediaValidationResult.ForRejection(SourceAttemptResult.Rejected, "unused: the provider returns no candidates");
             },
         };
 
@@ -80,10 +81,10 @@ public class ProcessMovieClaimTests : IClassFixture<ApiWebApplicationFactory>
 
     private string[] Events => _events.ToArray();
 
-    // --- B. The claim is persisted first, and nothing else is ---
+    // --- The claim is persisted first, then (and only then) the provider is called ---
 
     [Fact]
-    public async Task ProcessMovie_Claim_IsSavedOnceThroughTheConcurrencyAwareSave_BeforeAnythingElseHappens()
+    public async Task ProcessMovie_Claim_IsSavedOnceThroughTheConcurrencyAwareSave_BeforeTheFirstExternalCall()
     {
         Guid movieId = await SeedMovieAsync(_services, MediaStatus.Pending);
 
@@ -91,22 +92,29 @@ public class ProcessMovieClaimTests : IClassFixture<ApiWebApplicationFactory>
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
-        // Exactly one save, and it is the concurrency-aware claim save: at that moment the
-        // aggregate was already Searching in memory while the database still said Pending -
-        // so persisting it is what makes the claim real, and it succeeded. No plain
-        // SaveChanges, and (6.2b) no provider or validator call at any point.
+        // SAVE #1 is the concurrency-aware claim: at that moment the aggregate was already
+        // Searching in memory while the database still said Pending, and it succeeded.
+        // Only then does the provider run, and the outcome (no candidates -> Unavailable)
+        // is persisted by a separate, later plain save - the claim and the outcome are never
+        // one transaction. The validator is never reached (nothing to validate).
         Assert.Equal(
-            ["claim-save:in-memory=Searching", "claim-save:persisted-before=Pending", "claim-save:result=True"],
+            [
+                "claim-save:in-memory=Searching",
+                "claim-save:persisted-before=Pending",
+                "claim-save:result=True",
+                "external:stream-provider",
+                "plain-save",
+            ],
             Events);
 
         Movie persisted = await LoadMovieAsync(_services, movieId);
-        Assert.Equal(MediaStatus.Searching, persisted.Status);
+        Assert.Equal(MediaStatus.Unavailable, persisted.Status);
     }
 
-    // --- D. The race loser ends cleanly ---
+    // --- The race loser ends cleanly, with ZERO provider calls ---
 
     [Fact]
-    public async Task ProcessMovie_ClaimLostToAConcurrentClaimant_Returns409AlreadyBeingProcessed_AndDoesNotProceed()
+    public async Task ProcessMovie_ClaimLostToAConcurrentClaimant_Returns409AlreadyBeingProcessed_AndNeverCallsTheProvider()
     {
         Guid movieId = await SeedMovieAsync(_services, MediaStatus.Pending);
         DateTime competitorClaimedAtUtc = Now.AddSeconds(5);
@@ -116,8 +124,8 @@ public class ProcessMovieClaimTests : IClassFixture<ApiWebApplicationFactory>
         _loadHook.AfterLoadAsync = async _ =>
         {
             await using AsyncServiceScope competitorScope = _services.CreateAsyncScope();
-            Movie competitorsCopy = (await competitorScope.ServiceProvider
-                .GetRequiredService<CatalogDbContext>().Set<Movie>().SingleAsync(m => m.Id == movieId));
+            Movie competitorsCopy = await competitorScope.ServiceProvider
+                .GetRequiredService<CatalogDbContext>().Set<Movie>().SingleAsync(m => m.Id == movieId);
             Assert.True(competitorsCopy.StartSearching(competitorClaimedAtUtc).IsSuccess);
             await competitorScope.ServiceProvider.GetRequiredService<CatalogDbContext>().SaveChangesAsync();
         };
@@ -128,8 +136,8 @@ public class ProcessMovieClaimTests : IClassFixture<ApiWebApplicationFactory>
         ProblemResponse? problem = await response.Content.ReadFromJsonAsync<ProblemResponse>();
         Assert.Equal("Movies.AlreadyBeingProcessed", problem?.Title);
 
-        // The loser's claim save failed, was NOT retried (one attempt, no plain save),
-        // and nothing external ran afterwards.
+        // The loser's claim save failed and was NOT retried (one attempt, no plain save), and
+        // neither the provider nor the validator was ever reached.
         Assert.Equal(
             ["claim-save:in-memory=Searching", "claim-save:persisted-before=Searching", "claim-save:result=False"],
             Events);
@@ -142,10 +150,10 @@ public class ProcessMovieClaimTests : IClassFixture<ApiWebApplicationFactory>
         await AssertNothingProducedAsync(movieId);
     }
 
-    // --- C. Two concurrent attempts cannot both acquire the movie ---
+    // --- Two concurrent attempts cannot both acquire the movie ---
 
     [Fact]
-    public async Task ProcessMovie_TwoRequestsBothHoldingTheSamePendingMovie_ExactlyOneClaimsIt()
+    public async Task ProcessMovie_TwoRequestsBothHoldingTheSamePendingMovie_ExactlyOneClaimsItAndOnlyItCallsTheProvider()
     {
         Guid movieId = await SeedMovieAsync(_services, MediaStatus.Pending);
 
@@ -155,24 +163,27 @@ public class ProcessMovieClaimTests : IClassFixture<ApiWebApplicationFactory>
 
         HttpResponseMessage[] responses = await Task.WhenAll(ProcessAsync(movieId), ProcessAsync(movieId));
 
-        Assert.Single(responses, r => r.StatusCode == HttpStatusCode.OK);
+        HttpResponseMessage winner = Assert.Single(responses, r => r.StatusCode == HttpStatusCode.OK);
         HttpResponseMessage loser = Assert.Single(responses, r => r.StatusCode == HttpStatusCode.Conflict);
         ProblemResponse? problem = await loser.Content.ReadFromJsonAsync<ProblemResponse>();
         Assert.Equal("Movies.AlreadyBeingProcessed", problem?.Title);
 
-        HttpResponseMessage winner = responses.Single(r => r.StatusCode == HttpStatusCode.OK);
         ProcessMovieResponse? winnerBody = await winner.Content.ReadFromJsonAsync<ProcessMovieResponse>();
-        Assert.Equal("Searching", winnerBody?.Status);
+        Assert.Equal("Unavailable", winnerBody?.Status); // the winner ran the whole (provider -> no candidates) flow
 
-        // Two claim saves were attempted; exactly one succeeded. Nothing external ran.
-        Assert.Equal(1, Events.Count(e => e == "claim-save:result=True"));
-        Assert.Equal(1, Events.Count(e => e == "claim-save:result=False"));
-        Assert.DoesNotContain(Events, e => e.StartsWith("external:", StringComparison.Ordinal));
+        // Two claim saves were attempted; exactly one succeeded - and the provider was
+        // called exactly once, by the winner, after its claim save.
+        string[] events = Events;
+        Assert.Equal(1, events.Count(e => e == "claim-save:result=True"));
+        Assert.Equal(1, events.Count(e => e == "claim-save:result=False"));
+        Assert.Equal(1, events.Count(e => e == "external:stream-provider"));
+        Assert.True(
+            Array.IndexOf(events, "claim-save:result=True") < Array.IndexOf(events, "external:stream-provider"),
+            "the provider must only be called after the claim save succeeded");
 
         Movie persisted = await LoadMovieAsync(_services, movieId);
-        Assert.Equal(MediaStatus.Searching, persisted.Status);
-        Assert.Equal(Now, persisted.UpdatedAtUtc);
-        Assert.Equal(0, persisted.AttemptCount);
+        Assert.Equal(MediaStatus.Unavailable, persisted.Status);
+        Assert.Equal(1, persisted.AttemptCount); // one outcome, recorded once
         await AssertNothingProducedAsync(movieId);
     }
 
@@ -183,33 +194,5 @@ public class ProcessMovieClaimTests : IClassFixture<ApiWebApplicationFactory>
 
         Assert.Empty(await context.Set<SourceAttempt>().Where(a => a.MovieId == movieId).ToListAsync());
         Assert.Empty(await context.Set<StrmFile>().Where(f => f.MovieId == movieId).ToListAsync());
-    }
-
-    /// <summary>
-    /// Records what the handler does to persistence. On the concurrency-aware save it also
-    /// captures the tracked Movie's in-memory status and - via a database read taken before
-    /// the save is issued - the status the database still held at that instant.
-    /// </summary>
-    private sealed class SpyUnitOfWork(CatalogDbContext context, ConcurrentQueue<string> events) : IUnitOfWork
-    {
-        public Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
-        {
-            events.Enqueue("plain-save");
-            return context.SaveChangesAsync(cancellationToken);
-        }
-
-        public async Task<bool> TrySaveChangesAsync(CancellationToken cancellationToken = default)
-        {
-            var entry = context.ChangeTracker.Entries<Movie>().Single();
-            events.Enqueue($"claim-save:in-memory={entry.Entity.Status}");
-
-            var persisted = await entry.GetDatabaseValuesAsync(cancellationToken);
-            events.Enqueue($"claim-save:persisted-before={persisted!.GetValue<MediaStatus>(nameof(Movie.Status))}");
-
-            bool saved = await context.TrySaveChangesAsync(cancellationToken);
-            events.Enqueue($"claim-save:result={saved}");
-
-            return saved;
-        }
     }
 }

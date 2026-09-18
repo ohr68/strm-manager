@@ -6,7 +6,15 @@ using StrmManager.Modules.Catalog.Infrastructure.Database;
 
 namespace StrmManager.Modules.Catalog.IntegrationTests.Processing;
 
-internal sealed record ProcessMovieResponse(Guid MovieId, string Status, int Attempts, string? StrmPath, string? Reason);
+internal sealed record SelectedSourceResponse(string Provider, string Name);
+
+internal sealed record ProcessMovieResponse(
+    Guid MovieId,
+    string Status,
+    int Attempts,
+    SelectedSourceResponse? SelectedSource,
+    string? StrmPath,
+    string? Reason);
 
 internal sealed record ProblemResponse(string? Title, string? Detail);
 
@@ -25,14 +33,17 @@ internal static class ProcessMovieTestSupport
     public static async Task<Guid> SeedMovieAsync(
         IServiceProvider services,
         MediaStatus status,
-        DateTime? nextAttemptAtUtc = null)
+        DateTime? nextAttemptAtUtc = null,
+        bool withoutImdbId = false)
     {
         await using AsyncServiceScope scope = services.CreateAsyncScope();
         CatalogDbContext context = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
 
         DateTime releaseAtUtc = status == MediaStatus.Scheduled ? Now.AddDays(30) : Now.AddDays(-30);
         Movie movie = Movie.Schedule(
-            new ExternalIds($"tt{Guid.NewGuid():N}"[..14], null, null),
+            withoutImdbId
+                ? new ExternalIds(null, $"tmdb{Guid.NewGuid():N}"[..12], null)
+                : new ExternalIds($"tt{Guid.NewGuid():N}"[..14], null, null),
             "Process Movie Test",
             2025,
             TimeSpan.FromMinutes(100),
@@ -145,5 +156,38 @@ internal sealed class MovieLoadHook
                 throw new TimeoutException("The other participant never loaded the movie.");
             }
         };
+    }
+}
+
+/// <summary>
+/// Records what a process request does to persistence, in order. On the concurrency-aware
+/// claim save it also captures the tracked Movie's in-memory status and - via a database
+/// read taken before the save is issued - the status the database still held at that
+/// instant. Every plain (non-claim) save is recorded as "plain-save". Shared by the
+/// ProcessMovie test classes together with the "external:*" events their fakes enqueue, so
+/// one ordered log shows claim-save -> provider -> validator -> saves.
+/// </summary>
+internal sealed class SpyUnitOfWork(
+    CatalogDbContext context,
+    System.Collections.Concurrent.ConcurrentQueue<string> events) : StrmManager.Modules.Catalog.Application.Abstractions.Data.IUnitOfWork
+{
+    public Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
+    {
+        events.Enqueue("plain-save");
+        return context.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task<bool> TrySaveChangesAsync(CancellationToken cancellationToken = default)
+    {
+        var entry = context.ChangeTracker.Entries<Movie>().Single();
+        events.Enqueue($"claim-save:in-memory={entry.Entity.Status}");
+
+        var persisted = await entry.GetDatabaseValuesAsync(cancellationToken);
+        events.Enqueue($"claim-save:persisted-before={persisted!.GetValue<MediaStatus>(nameof(Movie.Status))}");
+
+        bool saved = await context.TrySaveChangesAsync(cancellationToken);
+        events.Enqueue($"claim-save:result={saved}");
+
+        return saved;
     }
 }
