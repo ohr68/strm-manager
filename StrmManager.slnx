@@ -15,6 +15,10 @@
     <Project Path="src/Modules/Catalog/StrmManager.Modules.Catalog.Infrastructure/StrmManager.Modules.Catalog.Infrastructure.csproj" />
     <Project Path="src/Modules/Catalog/StrmManager.Modules.Catalog.Presentation/StrmManager.Modules.Catalog.Presentation.csproj" />
   </Folder>
+  <Folder Name="/src/Modules/MediaProcessing/">
+    <Project Path="src/Modules/MediaProcessing/StrmManager.Modules.MediaProcessing.Application/StrmManager.Modules.MediaProcessing.Application.csproj" />
+    <Project Path="src/Modules/MediaProcessing/StrmManager.Modules.MediaProcessing.Infrastructure/StrmManager.Modules.MediaProcessing.Infrastructure.csproj" />
+  </Folder>
   <Folder Name="/test/">
     <Project Path="test/StrmManager.ArchitectureTests/StrmManager.ArchitectureTests.csproj" />
     <Project Path="test/StrmManager.Modules.Catalog.IntegrationTests/StrmManager.Modules.Catalog.IntegrationTests.csproj" />
