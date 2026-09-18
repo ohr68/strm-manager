@@ -17,6 +17,7 @@ services:
       Strm__RootPath: /stream
       Scheduling__Enabled: "false"
       Scheduling__MaxConcurrentEpisodeProcessing: "1"
+      Scheduling__BatchSize: "1"
     logging:
       driver: json-file
       options:
