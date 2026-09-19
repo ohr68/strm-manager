@@ -8,6 +8,7 @@ using StrmManager.Modules.Catalog.Domain.Movies;
 using StrmManager.Modules.Catalog.Domain.Shared;
 using StrmManager.Modules.Catalog.Domain.SourceAttempts;
 using StrmManager.Modules.Catalog.Domain.StrmFiles;
+using StrmManager.Modules.MediaProcessing.Application.Selection;
 using StrmManager.Modules.MediaProcessing.Application.StrmGeneration;
 using StrmManager.Modules.MediaProcessing.Application.Streams;
 using StrmManager.Modules.MediaProcessing.Application.Streams.MovieIdentity;
@@ -35,11 +36,12 @@ namespace StrmManager.Modules.Catalog.Application.Movies.ProcessMovie;
 /// Completed, Unavailable or Error - never left Validating (short of a crash or cancellation,
 /// which the maintenance sweep recovers, exactly as for Episode).
 ///
-/// Identity (MovieIdentityValidator) is positive-evidence-only: a candidate with no explicit
-/// matching IMDb id, TMDB id or "(YYYY)" is rejected without ever reaching ffprobe - the same
-/// candidate list can be served for several different same-title movies, so a title is never
-/// trusted. Candidates that need custom request headers are unsupported (a plain .strm cannot
-/// carry them) and are rejected before identity or ffprobe.
+/// Candidate selection is MovieSourceSelector's policy (MediaProcessing.Application), applied here
+/// unchanged and recorded as SourceAttempts: identity (MovieIdentityValidator) is
+/// positive-evidence-only - a candidate with no explicit matching IMDb id, TMDB id or "(YYYY)" is
+/// rejected without ever reaching ffprobe, since the same candidate list can be served for several
+/// different same-title movies and a title is never trusted - and candidates that need custom
+/// request headers (a plain .strm cannot carry them) are rejected before identity or ffprobe.
 /// </summary>
 internal sealed partial class ProcessMovieCommandHandler(
     IMovieRepository movieRepository,
@@ -140,50 +142,28 @@ internal sealed partial class ProcessMovieCommandHandler(
         StreamCandidate? approvedCandidate = null;
         var identityReference = new MovieIdentityReference(movie.ExternalIds.ImdbId, movie.ExternalIds.TmdbId, movie.Year);
 
-        foreach (StreamCandidate candidate in candidates)
+        var validationReference = new MediaValidationReference(movie.Runtime);
+
+        // The selection policy (unsupported headers -> identity -> media validation, first approved wins) lives
+        // in MovieSourceSelector. It streams one evaluation per candidate, each only after that candidate has
+        // been fully evaluated, so every attempt is recorded before the next candidate is examined.
+        await foreach (MovieCandidateEvaluation evaluation in MovieSourceSelector.EvaluateAsync(
+            candidates, identityReference, validationReference, mediaValidator, cancellationToken))
         {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            // 1) Capability: a stream that needs custom request headers cannot be played from a
-            // plain .strm and cannot be probed by the current validator - unsupported, so it is
-            // rejected before anything is spent on it. Only that fact is known, never the values.
-            if (candidate.RequiresCustomHeaders)
-            {
-                RejectWithoutMediaValidation(movie, candidate, "Candidate requires custom request headers, which are not supported.", ref attemptsThisRun);
-                continue;
-            }
-
-            // 2) Identity, from the candidate's own explicit evidence only. Anything but an
-            // explicit IMDb/TMDB match or matching "(YYYY)" is rejected - and never reaches ffprobe.
-            MovieIdentityMatch identityMatch = MovieIdentityValidator.Evaluate(
-                candidate.Name, candidate.Description, candidate.TmdbId, identityReference);
-
-            if (identityMatch is not (MovieIdentityMatch.Confirmed or MovieIdentityMatch.Compatible))
-            {
-                string reason = identityMatch == MovieIdentityMatch.Conflicting
-                    ? "Candidate references a different movie."
-                    : "Could not confirm the candidate's movie identity.";
-
-                RejectWithoutMediaValidation(movie, candidate, reason, ref attemptsThisRun);
-                continue;
-            }
-
-            // 3) Media validation (ffprobe).
-            var validationReference = new MediaValidationReference(movie.Runtime);
-            MediaValidationResult validationResult = await mediaValidator.ValidateAsync(candidate, validationReference, cancellationToken);
-
             // Every evaluated candidate - approved or not - is recorded, with only what the
             // SourceAttempt model holds (never the URL).
+            MediaValidationResult result = evaluation.Result;
+
             RecordAttempt(
-                movie.Id, candidate, validationResult.Result, validationResult.Duration, validationResult.ExpectedDuration,
-                validationResult.DifferencePercentage, validationResult.VideoCodec, validationResult.AudioCodec, validationResult.FailureReason);
+                movie.Id, evaluation.Candidate, result.Result, result.Duration, result.ExpectedDuration,
+                result.DifferencePercentage, result.VideoCodec, result.AudioCodec, result.FailureReason);
             attemptsThisRun++;
 
-            LogCandidateAttempt(logger, movie.Id, candidate.Name, attemptsThisRun, validationResult.Result);
+            LogCandidateAttempt(logger, movie.Id, evaluation.Candidate.Name, attemptsThisRun, result.Result);
 
-            if (validationResult.Approved)
+            if (evaluation.Approved)
             {
-                approvedCandidate = candidate;
+                approvedCandidate = evaluation.Candidate;
                 break;
             }
         }
@@ -229,18 +209,6 @@ internal sealed partial class ProcessMovieCommandHandler(
         return new ProcessMovieResult(
             movie.Id, MediaStatus.Completed.ToString(), attemptsThisRun,
             new SelectedMovieSource(approvedCandidate.Provider, approvedCandidate.Name), writeResult.Value, null);
-    }
-
-    /// <summary>
-    /// A candidate turned away by a check that runs before ffprobe (unsupported headers, identity):
-    /// still a SourceAttempt - Rejected, with a fixed safe reason - and still counted as attempted.
-    /// </summary>
-    private void RejectWithoutMediaValidation(Movie movie, StreamCandidate candidate, string reason, ref int attemptsThisRun)
-    {
-        RecordAttempt(movie.Id, candidate, SourceAttemptResult.Rejected, null, movie.Runtime, null, null, null, reason);
-        attemptsThisRun++;
-
-        LogCandidateAttempt(logger, movie.Id, candidate.Name, attemptsThisRun, SourceAttemptResult.Rejected);
     }
 
     private void RecordAttempt(
