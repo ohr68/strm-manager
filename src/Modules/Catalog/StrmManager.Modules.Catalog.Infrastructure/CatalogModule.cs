@@ -95,6 +95,13 @@ public static class CatalogModule
             .ValidateDataAnnotations()
             .ValidateOnStart();
 
+        // Deliberately NO validation and NO ValidateOnStart (ADR-015): the application must start without Playback:PublicBaseUrl.
+        // A missing or unusable value is refused where it matters - PlaybackUrlBuilder, and ProcessMovie before it claims anything.
+        services.AddOptions<PlaybackOptions>()
+            .Bind(configuration.GetSection(PlaybackOptions.SectionName));
+
+        services.AddSingleton<IPlaybackUrlBuilder, PlaybackUrlBuilder>();
+
         services.AddOptions<MetadataRefreshOptions>()
             .Bind(configuration.GetSection(MetadataRefreshOptions.SectionName))
             .ValidateDataAnnotations()

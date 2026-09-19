@@ -3,6 +3,7 @@ using Microsoft.Extensions.Options;
 using StrmManager.Common.Application.Messaging;
 using StrmManager.Common.Domain.Abstractions;
 using StrmManager.Modules.Catalog.Application.Abstractions.Data;
+using StrmManager.Modules.Catalog.Application.Playback;
 using StrmManager.Modules.Catalog.Application.Processing;
 using StrmManager.Modules.Catalog.Domain.Movies;
 using StrmManager.Modules.Catalog.Domain.Shared;
@@ -17,9 +18,14 @@ using StrmManager.Modules.MediaProcessing.Application.Validation;
 namespace StrmManager.Modules.Catalog.Application.Movies.ProcessMovie;
 
 /// <summary>
-/// Movie counterpart of ProcessEpisodeCommandHandler: claim -> provider lookup -> per candidate
-/// (unsupported-headers check -> movie identity check -> ffprobe media validation) -> first
-/// approved candidate -> write the movie .strm -> StrmFile -> Completed.
+/// Movie counterpart of ProcessEpisodeCommandHandler: [stable playback URL precondition] -> claim -> provider
+/// lookup -> per candidate (unsupported-headers check -> movie identity check -> ffprobe media validation) ->
+/// first approved candidate -> write the movie .strm -> StrmFile -> Completed.
+///
+/// The .strm holds the STABLE playback URL ({PublicBaseUrl}/media/{movieId}/stream, ADR-015), never the provider's
+/// ephemeral media URL; the approved candidate only proves the movie is resolvable now. If that URL cannot be built
+/// (PublicBaseUrl missing/unusable) the request fails BEFORE anything is claimed or mutated. An already Completed movie
+/// is returned as-is first - it needs no configuration and its existing .strm is never rewritten.
 ///
 /// The claim comes first and is durable before anything else: the Movie is moved
 /// Pending -> Searching and that claim is PERSISTED through the concurrency-aware save
@@ -50,6 +56,7 @@ internal sealed partial class ProcessMovieCommandHandler(
     IStreamProvider streamProvider,
     IMediaValidator mediaValidator,
     IStrmWriter strmWriter,
+    IPlaybackUrlBuilder playbackUrlBuilder,
     IUnitOfWork unitOfWork,
     IOptions<ProcessingOptions> processingOptions,
     TimeProvider timeProvider,
@@ -72,6 +79,18 @@ internal sealed partial class ProcessMovieCommandHandler(
             return new ProcessMovieResult(
                 movie.Id, MediaStatus.Completed.ToString(), movie.AttemptCount, null,
                 alreadyWrittenStrmFile?.Path, "Movie is already Completed - not reprocessed.");
+        }
+
+        // PRECONDITION (ADR-015): the .strm this run will write contains the stable playback URL, so without a usable
+        // Playback:PublicBaseUrl there is nothing valid to write. That is decided HERE - before StartSearching, before the claim
+        // save, before any provider or ffprobe call - so a configuration problem can never leave a movie Searching/Validating, and
+        // nobody, in a race or not, claims or mutates it. An already Completed movie returned above and never needs it.
+        Result<string> stablePlaybackUrl = playbackUrlBuilder.Build(movie.Id);
+
+        if (stablePlaybackUrl.IsFailure)
+        {
+            LogPlaybackUrlUnavailable(logger, movie.Id, stablePlaybackUrl.Error.Code);
+            return Result.Failure<ProcessMovieResult>(stablePlaybackUrl.Error);
         }
 
         // The aggregate alone decides whether a claim is allowed (only Pending is).
@@ -173,10 +192,11 @@ internal sealed partial class ProcessMovieCommandHandler(
             return await FinishAsUnavailable(movie, "No candidate passed identity/media validation.", cancellationToken, attemptsThisRun);
         }
 
-        // The approved candidate's URL is the .strm's content - handed straight to the writer and
-        // never logged, persisted, or put in an error or the response.
+        // The approved candidate proved the movie is resolvable NOW (identity + ffprobe above), and that is all it is used for: its
+        // provider URL is ephemeral and never reaches the .strm. The file holds the stable playback URL, which resolves a fresh
+        // source each time it is played.
         var strmReference = new MovieStrmReference(movie.Title, movie.Year, movie.ExternalIds.ImdbId);
-        Result<string> writeResult = await strmWriter.WriteMovieAsync(strmReference, approvedCandidate.Url, cancellationToken);
+        Result<string> writeResult = await strmWriter.WriteMovieAsync(strmReference, stablePlaybackUrl.Value, cancellationToken);
 
         if (writeResult.IsFailure)
         {
@@ -260,6 +280,10 @@ internal sealed partial class ProcessMovieCommandHandler(
 
         return new ProcessMovieResult(movie.Id, MediaStatus.Error.ToString(), attempts, null, null, reason);
     }
+
+    // The configured value itself is not logged - only that it is unusable, and the stable error code.
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Movie {MovieId} was not processed: no stable playback URL can be built ({ErrorCode}); nothing was claimed")]
+    private static partial void LogPlaybackUrlUnavailable(ILogger logger, Guid movieId, string errorCode);
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Movie {MovieId} is already being processed by another request - claim rejected")]
     private static partial void LogClaimConflict(ILogger logger, Guid movieId);

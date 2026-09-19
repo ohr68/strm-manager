@@ -49,9 +49,13 @@ internal sealed class ProcessMovieHost
     public Func<StreamCandidate, MediaValidationResult> Validate { get; set; } =
         _ => throw new InvalidOperationException("The media validator was not expected to be called.");
 
-    public ProcessMovieHost(ApiWebApplicationFactory factory, Action<IServiceCollection>? configure = null)
+    /// <param name="configure">Service overrides, applied last.</param>
+    /// <param name="configureHost">Host/configuration overrides (e.g. UseSetting), applied before the services - the path a deployment's environment variables take.</param>
+    public ProcessMovieHost(ApiWebApplicationFactory factory, Action<IServiceCollection>? configure = null, Action<IWebHostBuilder>? configureHost = null)
     {
-        WebApplicationFactory<Program> isolated = factory.WithWebHostBuilder(builder =>
+        WebApplicationFactory<Program> configured = configureHost is null ? factory : factory.WithWebHostBuilder(configureHost);
+
+        WebApplicationFactory<Program> isolated = configured.WithWebHostBuilder(builder =>
             builder.ConfigureTestServices(services =>
             {
                 services.AddSingleton<TimeProvider>(Time);

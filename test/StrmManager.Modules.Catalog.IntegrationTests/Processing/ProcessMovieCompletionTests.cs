@@ -18,8 +18,8 @@ namespace StrmManager.Modules.Catalog.IntegrationTests.Processing;
 /// <summary>
 /// Movie STRM completion, end to end over the REAL FileSystemStrmWriter and a throwaway temp root:
 /// after the first approved candidate the .strm is written at movies/{Title} ({Year}) [imdbid-{ImdbId}]/
-/// {Title} ({Year}).strm with the candidate URL as its only content, the StrmFile is stored, the movie
-/// is Completed and the response says so - and never contains the URL. A handled writer failure is a
+/// {Title} ({Year}).strm with the stable playback URL as its only content (never the candidate's provider URL, ADR-015),
+/// the StrmFile is stored, the movie is Completed and the response says so - and never contains the URL. A handled writer failure is a
 /// non-retryable Error with no false StrmFile and nothing left Validating.
 /// </summary>
 public class ProcessMovieCompletionTests(ApiWebApplicationFactory factory) : IClassFixture<ApiWebApplicationFactory>
@@ -43,7 +43,7 @@ public class ProcessMovieCompletionTests(ApiWebApplicationFactory factory) : ICl
     }
 
     [Fact]
-    public async Task ProcessMovie_ApprovedCandidate_WritesTheMovieStrmAtTheExpectedPathWithTheUrlAsContent()
+    public async Task ProcessMovie_ApprovedCandidate_WritesTheMovieStrmAtTheExpectedPathWithTheStablePlaybackUrlAsContent()
     {
         string imdbId = NextImdbId();
         Guid movieId = await SeedMovieAsync(_host.Services, MediaStatus.Pending, title: "Completion Movie", year: 2024, imdbId: imdbId);
@@ -65,9 +65,11 @@ public class ProcessMovieCompletionTests(ApiWebApplicationFactory factory) : ICl
         Assert.Equal(Path.GetFullPath(Path.Combine(_host.StrmRoot, expectedRelative)), Path.GetFullPath(result.StrmPath));
         Assert.Equal(expectedRelative, Path.GetRelativePath(_host.StrmRoot, result.StrmPath));
 
-        // The file exists and holds exactly the candidate URL (compared without printing it).
+        // The file exists and holds exactly the STABLE playback URL - never the provider's candidate URL (compared without printing it).
         Assert.True(File.Exists(result.StrmPath));
-        Assert.True(string.Equals(candidate.Url, await File.ReadAllTextAsync(result.StrmPath), StringComparison.Ordinal), "the .strm content is not the candidate URL");
+        string strmContent = await File.ReadAllTextAsync(result.StrmPath);
+        Assert.Equal($"{ApiWebApplicationFactory.TestPublicBaseUrl}/media/{movieId}/stream", strmContent);
+        Assert.False(strmContent.Contains(candidate.Url, StringComparison.Ordinal), "the .strm must not contain the candidate URL");
         Assert.Empty(Directory.GetFiles(Path.GetDirectoryName(result.StrmPath)!, "*.tmp")); // atomic write left nothing behind
     }
 

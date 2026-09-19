@@ -355,12 +355,13 @@ public class ProcessMovieIdentityTests(ApiWebApplicationFactory factory) : IClas
         IReadOnlyList<SourceAttempt> attempts = await host.AttemptsAsync(movieId);
         Assert.Equal(new string?[] { HeadersReason, null }, attempts.Select(a => a.FailureReason).ToArray());
 
-        // The URL lives in exactly one place - the .strm content. Everything else is free of both URLs and header values.
+        // The .strm holds the stable playback URL (ADR-015) - the provider URL is written nowhere. So the .strm joins everything else
+        // that must be free of both URLs and header values.
         string strmContent = await File.ReadAllTextAsync(result.StrmPath!);
-        Assert.Equal("https://media.example.test/space?token=SECRET-TOKEN-SPACE", strmContent);
+        Assert.Equal($"{ApiWebApplicationFactory.TestPublicBaseUrl}/media/{movieId}/stream", strmContent);
 
         Movie movie = await LoadMovieAsync(host.Services, movieId);
-        var everythingElse = new List<string> { body, movie.LastError ?? string.Empty, result.Reason ?? string.Empty };
+        var everythingElse = new List<string> { strmContent, body, movie.LastError ?? string.Empty, result.Reason ?? string.Empty };
         everythingElse.AddRange(attempts.Select(a => $"{a.Provider} {a.SourceName} {a.FailureReason} {a.VideoCodec} {a.AudioCodec}"));
         everythingElse.AddRange(host.Logs.Lines);
 

@@ -10,6 +10,9 @@ namespace StrmManager.Modules.Catalog.IntegrationTests.Infrastructure;
 
 public sealed class ApiWebApplicationFactory : WebApplicationFactory<Program>
 {
+    /// <summary>The PublicBaseUrl every test host gets unless it overrides it. A .invalid host: it can never resolve, so it can never be a real one.</summary>
+    public const string TestPublicBaseUrl = "http://strm-manager.test.invalid:8080";
+
     private readonly string _databasePath = Path.Combine(Path.GetTempPath(), $"strm-manager-tests-{Guid.NewGuid():N}.db");
     private readonly string _strmRootPath = Path.Combine(Path.GetTempPath(), $"strm-manager-tests-strm-{Guid.NewGuid():N}");
 
@@ -32,6 +35,11 @@ public sealed class ApiWebApplicationFactory : WebApplicationFactory<Program>
         // Never write real .strm output into the repo's data/stream directory - every
         // factory instance gets its own throwaway temp root, cleaned up on Dispose.
         builder.UseSetting("Strm:RootPath", _strmRootPath);
+
+        // The stable playback URL every new movie .strm contains needs an explicit PublicBaseUrl (ADR-015) - ProcessMovie refuses to
+        // claim anything without one. A test-only value (never a real host); tests about a missing or invalid value override it with
+        // factory.WithWebHostBuilder(...).
+        builder.UseSetting("Playback:PublicBaseUrl", TestPublicBaseUrl);
 
         // Scheduling's BackgroundServices must not run against a test database - most
         // tests act as their own "caller" against a fully synchronous, deterministic
