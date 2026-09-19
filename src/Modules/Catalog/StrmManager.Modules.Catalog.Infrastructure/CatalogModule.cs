@@ -4,7 +4,9 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Http.Resilience;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Polly;
 using StrmManager.Common.Application.Messaging;
@@ -67,6 +69,16 @@ public static class CatalogModule
         // Read-only, just-in-time playback resolution (ADR-015). No endpoint uses it yet.
         services.AddScoped<IPlaybackResolver, PlaybackResolver>();
 
+        // Single-flight + bounded concurrency around the resolver. A SINGLETON on purpose: the in-flight state must be
+        // shared by every request. It therefore takes no scoped dependency - it gets the root scope factory and creates
+        // (and disposes) its own scope for each shared resolution - and stops its work when the host begins to stop.
+        services.AddSingleton<IPlaybackResolutionCoordinator>(serviceProvider => new PlaybackResolutionCoordinator(
+            serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+            serviceProvider.GetRequiredService<IOptions<PlaybackResolutionOptions>>(),
+            serviceProvider.GetRequiredService<TimeProvider>(),
+            serviceProvider.GetRequiredService<ILogger<PlaybackResolutionCoordinator>>(),
+            serviceProvider.GetRequiredService<IHostApplicationLifetime>().ApplicationStopping));
+
         services.AddHandlersFromAssembly(typeof(AddSeriesCommand).Assembly);
         services.AddValidatorsFromAssembly(typeof(AddSeriesCommand).Assembly, includeInternalTypes: true);
 
@@ -74,6 +86,12 @@ public static class CatalogModule
 
         services.AddOptions<ProcessingOptions>()
             .Bind(configuration.GetSection(ProcessingOptions.SectionName))
+            .ValidateDataAnnotations()
+            .ValidateOnStart();
+
+        // Every value has a valid default, so a deployment with no "Playback:Resolution" section starts exactly as before.
+        services.AddOptions<PlaybackResolutionOptions>()
+            .Bind(configuration.GetSection(PlaybackResolutionOptions.SectionName))
             .ValidateDataAnnotations()
             .ValidateOnStart();
 

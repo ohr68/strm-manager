@@ -17,4 +17,9 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <ItemGroup>
+    <!-- Lets unit tests drive the internal single-flight registry directly; PlaybackResolutionCoordinator is the public surface. -->
+    <InternalsVisibleTo Include="StrmManager.Modules.Catalog.UnitTests" />
+  </ItemGroup>
+
 </Project>
