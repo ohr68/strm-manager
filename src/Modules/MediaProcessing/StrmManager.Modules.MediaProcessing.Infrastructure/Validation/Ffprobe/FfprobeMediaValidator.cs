@@ -100,7 +100,10 @@ internal sealed partial class FfprobeMediaValidator(IOptions<FfprobeOptions> opt
 
             if (process.ExitCode != 0)
             {
-                LogProbeFailed(logger, candidate.Name, process.ExitCode, Truncate(standardError, 500));
+                // ffprobe echoes its input URL (a signed provider URL) in its error output, so neither
+                // stderr nor stdout may reach a log or a message. Only the exit code and a category
+                // chosen from a fixed set - never a slice of ffprobe's text - are recorded.
+                LogProbeFailed(logger, candidate.Name, process.ExitCode, ClassifyFailure(standardError));
                 return MediaValidationResult.ForRejection(SourceAttemptResult.ProbeError, $"ffprobe exited with code {process.ExitCode}.");
             }
 
@@ -147,8 +150,34 @@ internal sealed partial class FfprobeMediaValidator(IOptions<FfprobeOptions> opt
         }
     }
 
-    private static string Truncate(string value, int maxLength) =>
-        value.Length <= maxLength ? value : value[..maxLength] + "...(truncated)";
+    /// <summary>
+    /// Maps ffprobe's stderr to a fixed category by well-known phrases. The input is only inspected, never
+    /// returned, so the result can be logged without carrying any of the text (or URL) it came from. Phrases
+    /// rather than bare status numbers are matched so a number inside the echoed URL cannot pick a category.
+    /// </summary>
+    private static FfprobeFailureCategory ClassifyFailure(string standardError)
+    {
+        if (standardError.Contains("403 Forbidden", StringComparison.OrdinalIgnoreCase)) { return FfprobeFailureCategory.HttpForbidden; }
+        if (standardError.Contains("404 Not Found", StringComparison.OrdinalIgnoreCase)) { return FfprobeFailureCategory.HttpNotFound; }
+        if (standardError.Contains("Server Error", StringComparison.OrdinalIgnoreCase)) { return FfprobeFailureCategory.HttpServerError; }
+        if (standardError.Contains("Connection refused", StringComparison.OrdinalIgnoreCase) ||
+            standardError.Contains("Failed to resolve hostname", StringComparison.OrdinalIgnoreCase)) { return FfprobeFailureCategory.ConnectionFailed; }
+        if (standardError.Contains("timed out", StringComparison.OrdinalIgnoreCase)) { return FfprobeFailureCategory.Timeout; }
+        if (standardError.Contains("Invalid data found", StringComparison.OrdinalIgnoreCase)) { return FfprobeFailureCategory.InvalidData; }
+
+        return FfprobeFailureCategory.Unknown;
+    }
+
+    private enum FfprobeFailureCategory
+    {
+        Unknown,
+        HttpForbidden,
+        HttpNotFound,
+        HttpServerError,
+        ConnectionFailed,
+        Timeout,
+        InvalidData,
+    }
 
     [LoggerMessage(Level = LogLevel.Debug, Message = "Probed candidate {CandidateName}: approved={Approved} result={Result} ({ElapsedMs}ms)")]
     private static partial void LogProbeCompleted(ILogger logger, string candidateName, bool approved, SourceAttemptResult result, long elapsedMs);
@@ -156,8 +185,8 @@ internal sealed partial class FfprobeMediaValidator(IOptions<FfprobeOptions> opt
     [LoggerMessage(Level = LogLevel.Warning, Message = "ffprobe timed out probing candidate {CandidateName} after {ElapsedMs}ms")]
     private static partial void LogProbeTimeout(ILogger logger, string candidateName, long elapsedMs);
 
-    [LoggerMessage(Level = LogLevel.Warning, Message = "ffprobe exited with code {ExitCode} for candidate {CandidateName}: {StandardError}")]
-    private static partial void LogProbeFailed(ILogger logger, string candidateName, int exitCode, string standardError);
+    [LoggerMessage(Level = LogLevel.Warning, Message = "ffprobe exited with code {ExitCode} for candidate {CandidateName} (failure category: {FailureCategory})")]
+    private static partial void LogProbeFailed(ILogger logger, string candidateName, int exitCode, FfprobeFailureCategory failureCategory);
 
     [LoggerMessage(Level = LogLevel.Error, Message = "ffprobe executable '{ExecutablePath}' is not available: {Reason}")]
     private static partial void LogExecutableUnavailable(ILogger logger, string executablePath, string reason);
