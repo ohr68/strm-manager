@@ -10,6 +10,7 @@ using Polly;
 using StrmManager.Common.Application.Messaging;
 using StrmManager.Modules.Catalog.Application.Abstractions.Data;
 using StrmManager.Modules.Catalog.Application.Metadata;
+using StrmManager.Modules.Catalog.Application.Playback;
 using StrmManager.Modules.Catalog.Application.Processing;
 using StrmManager.Modules.Catalog.Application.Series.AddSeries;
 using StrmManager.Modules.Catalog.Application.Status;
@@ -62,6 +63,9 @@ public static class CatalogModule
         services.AddScoped<IStrmFileRepository, StrmFileRepository>();
 
         services.AddScoped<CatalogSynchronizer>();
+
+        // Read-only, just-in-time playback resolution (ADR-015). No endpoint uses it yet.
+        services.AddScoped<IPlaybackResolver, PlaybackResolver>();
 
         services.AddHandlersFromAssembly(typeof(AddSeriesCommand).Assembly);
         services.AddValidatorsFromAssembly(typeof(AddSeriesCommand).Assembly, includeInternalTypes: true);
