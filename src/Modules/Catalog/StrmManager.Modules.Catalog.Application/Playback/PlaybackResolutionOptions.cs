@@ -31,10 +31,12 @@ public sealed class PlaybackResolutionOptions
 
     /// <summary>
     /// The longest an admitted resolution may run before it is cancelled and its callers get a generic failure. A guard
-    /// that frees the slot from a stuck provider or ffprobe, not a statement about how long a good resolution takes:
-    /// it must exceed the provider's own timeout plus at least one ffprobe (30 s by default), or it would cut off
-    /// resolutions that were about to succeed. It is a starting point, not a measured value.
+    /// that frees the slot from a stuck provider or ffprobe, not a statement about how long a good resolution takes.
+    /// The margin must exceed the existing provider retry envelope PLUS the ffprobe process budget, or it would cut
+    /// off a legitimate degraded resolution that was about to succeed: the provider call can take about 15 s per
+    /// attempt with up to 2 retries after the first (about 45 s), and one ffprobe adds up to 30 s - about 75 s before
+    /// any orchestration overhead. 90 s leaves that overhead a margin. It is a starting point, not a measured value.
     /// </summary>
     [Range(typeof(TimeSpan), "00:00:05", "00:10:00")]
-    public TimeSpan ResolutionBudget { get; set; } = TimeSpan.FromSeconds(60);
+    public TimeSpan ResolutionBudget { get; set; } = TimeSpan.FromSeconds(90);
 }

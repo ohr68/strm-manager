@@ -701,7 +701,7 @@ public class PlaybackResolutionCoordinatorTests
         Assert.Empty(Validate(options));
         Assert.Equal(2, options.MaxConcurrentResolutions);
         Assert.Equal(TimeSpan.FromSeconds(5), options.QueueWait);
-        Assert.Equal(TimeSpan.FromSeconds(60), options.ResolutionBudget);
+        Assert.Equal(TimeSpan.FromSeconds(90), options.ResolutionBudget);
     }
 
     [Theory]
