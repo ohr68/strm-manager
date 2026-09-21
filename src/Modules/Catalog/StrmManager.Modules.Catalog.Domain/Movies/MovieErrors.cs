@@ -8,6 +8,13 @@ public static class MovieErrors
         Error.NotFound("Movies.NotFound", $"The movie with the identifier '{movieId}' was not found.");
 
     /// <summary>
+    /// No movie has this IMDb id. Same code as <see cref="NotFound(Guid)"/> ("Movies.NotFound"), so a caller handles both lookups alike. The
+    /// id echoed here has already passed the IMDb-id validation ("tt" + digits), and no provider information is involved.
+    /// </summary>
+    public static Error NotFoundByImdbId(string imdbId) =>
+        Error.NotFound("Movies.NotFound", $"The movie with the IMDb id '{imdbId}' was not found.");
+
+    /// <summary>
     /// Another request already holds the movie's processing claim - either it is
     /// Searching/Validating right now, or this request lost the optimistic-concurrency
     /// race for the Pending -> Searching claim. Same Conflict (409) as

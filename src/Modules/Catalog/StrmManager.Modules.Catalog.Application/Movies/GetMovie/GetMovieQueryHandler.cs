@@ -16,17 +16,6 @@ internal sealed class GetMovieQueryHandler(IMovieRepository movieRepository)
             return Result.Failure<MovieResponse>(MovieErrors.NotFound(query.MovieId));
         }
 
-        return new MovieResponse(
-            movie.Id,
-            movie.ExternalIds.ImdbId,
-            movie.ExternalIds.TmdbId,
-            movie.ExternalIds.TvdbId,
-            movie.Title,
-            movie.Year,
-            movie.Runtime,
-            movie.ReleaseAtUtc,
-            movie.Status.ToString(),
-            movie.CreatedAtUtc,
-            movie.UpdatedAtUtc);
+        return MovieResponse.From(movie);
     }
 }

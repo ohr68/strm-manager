@@ -7,7 +7,7 @@ internal sealed class AddMovieCommandValidator : AbstractValidator<AddMovieComma
     public AddMovieCommandValidator()
     {
         // The id is interpolated into a provider URL path - reject anything that is not a
-        // plain IMDb title id before it can reach the provider. (32 = imdb_id column size.)
-        RuleFor(c => c.ImdbId).NotEmpty().MaximumLength(32).Matches(@"^tt\d{1,15}$");
+        // plain IMDb title id before it can reach the provider (see ImdbIdRules).
+        RuleFor(c => c.ImdbId).MustBeAnImdbTitleId();
     }
 }
