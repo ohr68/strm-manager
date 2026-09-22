@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    STRM Manager Jellyfin plugin - real product project (P1: STRM Manager lookup client).
+    Structure/patterns (FrameworkReference + Jellyfin package shape, ExcludeAssets=runtime) follow the throwaway P0
+    spike at C:\Users\Otavio\Claude\p0-spike\plugin\Jellyfin.Plugin.StrmSpike, which is reference only and is not
+    reused as code. This plugin never references any StrmManager.* backend assembly - it only ever calls the
+    backend's public HTTP API (see StrmManagerClient/), the same boundary the accepted architecture decision
+    requires ("must not carry provider, Cinemeta or FrostStream knowledge").
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Jellyfin.Plugin.StrmManager</RootNamespace>
+    <AssemblyVersion>0.1.0.0</AssemblyVersion>
+    <FileVersion>0.1.0.0</FileVersion>
+    <!-- Override on the command line to compile the same source against another SDK: -p:JellyfinVersion=12.1.0 -->
+    <JellyfinVersion Condition="'$(JellyfinVersion)' == ''">12.1.0</JellyfinVersion>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Gives compile-time access to ControllerBase / [Authorize] without bundling ASP.NET Core assemblies. -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+
+    <!-- ExcludeAssets=runtime: the Jellyfin server already has these; shipping them makes the plugin fail to register. -->
+    <PackageReference Include="Jellyfin.Controller" Version="$(JellyfinVersion)">
+      <ExcludeAssets>runtime</ExcludeAssets>
+    </PackageReference>
+    <PackageReference Include="Jellyfin.Model" Version="$(JellyfinVersion)">
+      <ExcludeAssets>runtime</ExcludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
+</Project>
