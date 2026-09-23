@@ -38,8 +38,23 @@ public class CinemetaCatalogProviderTests
 
         Assert.True(result.IsSuccess);
         Assert.Equal(2, result.Value.Count);
-        Assert.Equal(new CatalogMovie("tt27165187", "The End of Oak Street", 2026, "https://images.metahub.space/poster/small/tt27165187/img"), result.Value[0]);
-        Assert.Equal(new CatalogMovie("tt28014327", "Mayday", 2026, "https://images.metahub.space/poster/small/tt28014327/img"), result.Value[1]);
+
+        // Field-by-field, not whole-record Assert.Equal: CatalogMovie's synthesized equality compares Genres via
+        // EqualityComparer<IReadOnlyList<string>>.Default, which is reference equality for a List<T> - two
+        // separately-built lists with identical contents would never compare equal that way.
+        CatalogMovie first = result.Value[0];
+        Assert.Equal("tt27165187", first.ExternalId);
+        Assert.Equal("The End of Oak Street", first.Title);
+        Assert.Equal(2026, first.Year);
+        Assert.Equal("https://images.metahub.space/poster/small/tt27165187/img", first.PosterUrl);
+        Assert.Equal(["Action", "Adventure", "Mystery"], first.Genres);
+
+        CatalogMovie second = result.Value[1];
+        Assert.Equal("tt28014327", second.ExternalId);
+        Assert.Equal("Mayday", second.Title);
+        Assert.Equal(2026, second.Year);
+        Assert.Equal("https://images.metahub.space/poster/small/tt28014327/img", second.PosterUrl);
+        Assert.Equal(["Action", "Adventure", "Comedy"], second.Genres);
     }
 
     [Fact]

@@ -30,4 +30,7 @@ internal sealed class CinemetaCatalogItemDto
 
     /// <summary>A ready-to-use absolute image URL (e.g. https://images.metahub.space/poster/small/{imdbId}/img) - verified live, never built/guessed client-side.</summary>
     public string? Poster { get; set; }
+
+    /// <summary>Cinemeta's own genre tags for this item (e.g. "Action", "Comedy") - used by UI-4's row policy (see CinemetaCatalogMapper/CatalogMovie.Genres). Never aliased or inferred - only what Cinemeta itself reports.</summary>
+    public List<string>? Genre { get; set; }
 }

@@ -18,7 +18,8 @@ internal static class CinemetaCatalogMapper
         }
 
         int? year = CinemetaMetadataMapper.TryParseYear(item.ReleaseInfo, out int parsedYear) ? parsedYear : null;
+        IReadOnlyList<string> genres = item.Genre ?? [];
 
-        return new CatalogMovie(item.Id, item.Name, year, item.Poster);
+        return new CatalogMovie(item.Id, item.Name, year, item.Poster, genres);
     }
 }
