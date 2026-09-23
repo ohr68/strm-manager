@@ -7,22 +7,25 @@ using StrmManager.Modules.Catalog.Application.Metadata;
 using StrmManager.Modules.Catalog.Application.Processing;
 using StrmManager.Modules.Catalog.Application.Series.RefreshSeriesMetadata;
 using StrmManager.Modules.Catalog.Domain.Episodes;
+using StrmManager.Modules.Catalog.Domain.Movies;
 using ISeriesRepository = StrmManager.Modules.Catalog.Domain.Series.ISeriesRepository;
 using SeriesEntity = StrmManager.Modules.Catalog.Domain.Series.Series;
 
 namespace StrmManager.Modules.Catalog.Application.Maintenance;
 
 /// <summary>
-/// The four housekeeping steps an autonomous server needs, bundled into one testable
-/// use case rather than four tiny handlers or four tiny BackgroundServices (see ADR-012):
-/// promote released Scheduled episodes, retry due Unavailable/Error episodes, recover
-/// stale Searching/Validating episodes (an interrupted processing run - see
-/// Episode.RecoverInterruptedProcessing/ADR-013), and refresh metadata for Series whose
-/// schedule is due. Called by Scheduling's CatalogMaintenanceWorker, and directly by
-/// tests - the worker adds nothing but a timer around this.
+/// The housekeeping steps an autonomous server needs, bundled into one testable use case
+/// rather than one tiny handler/BackgroundService per step (see ADR-012): promote released
+/// Scheduled episodes, retry due Unavailable/Error episodes, recover stale
+/// Searching/Validating episodes AND movies (an interrupted processing run - see
+/// Episode.RecoverInterruptedProcessing/Movie.RecoverInterruptedProcessing/ADR-013), and
+/// refresh metadata for Series whose schedule is due. Called by Scheduling's
+/// CatalogMaintenanceWorker, and directly by tests - the worker adds nothing but a timer
+/// around this.
 /// </summary>
 internal sealed partial class RunCatalogMaintenanceCommandHandler(
     IEpisodeRepository episodeRepository,
+    IMovieRepository movieRepository,
     ISeriesRepository seriesRepository,
     IUnitOfWork unitOfWork,
     ICommandHandler<RefreshSeriesMetadataCommand, CatalogSynchronizationResult> refreshSeriesMetadataHandler,
@@ -38,16 +41,17 @@ internal sealed partial class RunCatalogMaintenanceCommandHandler(
         int released = await PromoteScheduledEpisodesAsync(utcNow, cancellationToken);
         int retried = await RetryDueEpisodesAsync(utcNow, cancellationToken);
         int recovered = await RecoverStaleProcessingAsync(utcNow, cancellationToken);
+        int moviesRecovered = await RecoverStaleMovieProcessingAsync(utcNow, cancellationToken);
 
-        // One save for all three Episode-side batches above - they're independent,
-        // cheap, in-memory domain transitions with no external I/O between them.
+        // One save for all four batches above - they're independent, cheap, in-memory
+        // domain transitions with no external I/O between them.
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
         (int refreshed, int refreshFailed) = await RefreshDueSeriesMetadataAsync(utcNow, cancellationToken);
 
         LogMaintenanceCompleted(logger, released, retried, recovered, refreshed, refreshFailed);
 
-        return new CatalogMaintenanceResult(released, retried, recovered, refreshed, refreshFailed);
+        return new CatalogMaintenanceResult(released, retried, recovered, moviesRecovered, refreshed, refreshFailed);
     }
 
     private async Task<int> PromoteScheduledEpisodesAsync(DateTime utcNow, CancellationToken cancellationToken)
@@ -93,6 +97,20 @@ internal sealed partial class RunCatalogMaintenanceCommandHandler(
         return stale.Count;
     }
 
+    private async Task<int> RecoverStaleMovieProcessingAsync(DateTime utcNow, CancellationToken cancellationToken)
+    {
+        DateTime staleThresholdUtc = utcNow.Subtract(processingOptions.Value.StaleProcessingThreshold);
+        IReadOnlyList<Movie> stale = await movieRepository.GetStaleProcessingAsync(staleThresholdUtc, cancellationToken);
+
+        foreach (Movie movie in stale)
+        {
+            movie.RecoverInterruptedProcessing(utcNow);
+            LogMovieRecovered(logger, movie.Id);
+        }
+
+        return stale.Count;
+    }
+
     private async Task<(int Refreshed, int Failed)> RefreshDueSeriesMetadataAsync(DateTime utcNow, CancellationToken cancellationToken)
     {
         IReadOnlyList<SeriesEntity> due = await seriesRepository.GetDueForMetadataRefreshAsync(utcNow, cancellationToken);
@@ -127,6 +145,9 @@ internal sealed partial class RunCatalogMaintenanceCommandHandler(
 
     [LoggerMessage(Level = LogLevel.Debug, Message = "Recovered interrupted processing for episode {EpisodeId}")]
     private static partial void LogEpisodeRecovered(ILogger logger, Guid episodeId);
+
+    [LoggerMessage(Level = LogLevel.Debug, Message = "Recovered interrupted processing for movie {MovieId}")]
+    private static partial void LogMovieRecovered(ILogger logger, Guid movieId);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Metadata refresh failed for series {SeriesId}: {ErrorCode}")]
     private static partial void LogMetadataRefreshFailed(ILogger logger, Guid seriesId, string errorCode);

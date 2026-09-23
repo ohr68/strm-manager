@@ -26,5 +26,12 @@ internal sealed class MovieRepository(CatalogDbContext context) : IMovieReposito
                 movie.NextAttemptAtUtc <= utcNow)
             .ToListAsync(cancellationToken);
 
+    public async Task<IReadOnlyList<Movie>> GetStaleProcessingAsync(DateTime staleThresholdUtc, CancellationToken cancellationToken = default) =>
+        await context.Movies
+            .Where(movie =>
+                (movie.Status == MediaStatus.Searching || movie.Status == MediaStatus.Validating) &&
+                movie.UpdatedAtUtc <= staleThresholdUtc)
+            .ToListAsync(cancellationToken);
+
     public void Insert(Movie movie) => context.Movies.Add(movie);
 }

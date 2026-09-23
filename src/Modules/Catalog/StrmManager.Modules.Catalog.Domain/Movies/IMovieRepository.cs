@@ -10,5 +10,7 @@ public interface IMovieRepository
 
     Task<IReadOnlyList<Movie>> GetRetryableAsync(DateTime utcNow, CancellationToken cancellationToken = default);
 
+    Task<IReadOnlyList<Movie>> GetStaleProcessingAsync(DateTime staleThresholdUtc, CancellationToken cancellationToken = default);
+
     void Insert(Movie movie);
 }

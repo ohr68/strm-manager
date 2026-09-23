@@ -11,10 +11,12 @@ using StrmManager.Modules.Catalog.Application.Episodes.ProcessEpisode;
 using StrmManager.Modules.Catalog.Application.Maintenance;
 using StrmManager.Modules.Catalog.Application.Metadata;
 using StrmManager.Modules.Catalog.Domain.Episodes;
+using StrmManager.Modules.Catalog.Domain.Movies;
 using StrmManager.Modules.Catalog.Domain.Series;
 using StrmManager.Modules.Catalog.Domain.Shared;
 using StrmManager.Modules.Catalog.Infrastructure.Database;
 using StrmManager.Modules.Catalog.IntegrationTests.Infrastructure;
+using StrmManager.Modules.Catalog.IntegrationTests.Processing;
 using StrmManager.Modules.MediaProcessing.Application.Streams;
 using StrmManager.Modules.MediaProcessing.Application.Validation;
 using SeriesEntity = StrmManager.Modules.Catalog.Domain.Series.Series;
@@ -290,6 +292,74 @@ public class CatalogMaintenanceTests : IDisposable
         Assert.Equal(1, strmFileCount); // exactly one - not duplicated by the interrupted first attempt
     }
 
+    // --- Movie stale-processing recovery ---
+
+    [Theory]
+    [InlineData(false)] // Searching only
+    [InlineData(true)] // Searching then Validating
+    public async Task RunMaintenance_StaleMovieSearchingOrValidating_IsRecoveredToPending(bool alsoStartValidating)
+    {
+        Guid movieId = await ProcessMovieTestSupport.SeedMovieAsync(_services, MediaStatus.Pending);
+        await StartSearchingMovieAsync(movieId, BaseUtcNow.AddMinutes(-30));
+        if (alsoStartValidating)
+        {
+            await StartValidatingMovieAsync(movieId, BaseUtcNow.AddMinutes(-30)); // still well past the 15m default threshold
+        }
+
+        CatalogMaintenanceResult result = await RunMaintenanceAsync();
+
+        Assert.Equal(1, result.MoviesRecovered);
+        Movie movie = await GetMovieAsync(movieId);
+        Assert.Equal(MediaStatus.Pending, movie.Status);
+        Assert.Equal(0, movie.AttemptCount); // an interrupted run reached no outcome
+    }
+
+    [Theory]
+    [InlineData(MediaStatus.Searching)]
+    [InlineData(MediaStatus.Validating)]
+    public async Task RunMaintenance_MovieYoungerThanStaleThreshold_StaysUntouched(MediaStatus status)
+    {
+        Guid movieId = await ProcessMovieTestSupport.SeedMovieAsync(_services, MediaStatus.Pending);
+        await StartSearchingMovieAsync(movieId, BaseUtcNow.AddMinutes(-5)); // well under the 15m default threshold
+        if (status == MediaStatus.Validating)
+        {
+            await StartValidatingMovieAsync(movieId, BaseUtcNow.AddMinutes(-5));
+        }
+
+        CatalogMaintenanceResult result = await RunMaintenanceAsync();
+
+        Assert.Equal(0, result.MoviesRecovered);
+        Assert.Equal(status, (await GetMovieAsync(movieId)).Status);
+    }
+
+    [Theory]
+    [InlineData(MediaStatus.Pending)]
+    [InlineData(MediaStatus.Completed)]
+    [InlineData(MediaStatus.Unavailable)]
+    [InlineData(MediaStatus.Error)]
+    public async Task RunMaintenance_MovieInNonProcessingState_IsNeverRecovered(MediaStatus status)
+    {
+        Guid movieId = await ProcessMovieTestSupport.SeedMovieAsync(_services, status);
+
+        CatalogMaintenanceResult result = await RunMaintenanceAsync();
+
+        Assert.Equal(0, result.MoviesRecovered);
+        Assert.Equal(status, (await GetMovieAsync(movieId)).Status);
+    }
+
+    [Fact]
+    public async Task RunMaintenance_MovieExactlyAtStaleThreshold_IsRecovered()
+    {
+        // Proves the intentional <= in MovieRepository.GetStaleProcessingAsync, not just the well-past-threshold case.
+        Guid movieId = await ProcessMovieTestSupport.SeedMovieAsync(_services, MediaStatus.Pending);
+        await StartSearchingMovieAsync(movieId, BaseUtcNow.AddMinutes(-15)); // ProcessingOptions.StaleProcessingThreshold default
+
+        CatalogMaintenanceResult result = await RunMaintenanceAsync();
+
+        Assert.Equal(1, result.MoviesRecovered);
+        Assert.Equal(MediaStatus.Pending, (await GetMovieAsync(movieId)).Status);
+    }
+
     // --- Metadata refresh (sections 22-25/38) ---
 
     [Fact]
@@ -420,6 +490,31 @@ public class CatalogMaintenanceTests : IDisposable
         Episode episode = await context.Set<Episode>().SingleAsync(e => e.Id == episodeId);
         episode.StartValidating(startedAtUtc);
         await context.SaveChangesAsync();
+    }
+
+    private async Task StartSearchingMovieAsync(Guid movieId, DateTime startedAtUtc)
+    {
+        using IServiceScope scope = _services.CreateScope();
+        CatalogDbContext context = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
+        Movie movie = await context.Set<Movie>().SingleAsync(m => m.Id == movieId);
+        movie.StartSearching(startedAtUtc);
+        await context.SaveChangesAsync();
+    }
+
+    private async Task StartValidatingMovieAsync(Guid movieId, DateTime startedAtUtc)
+    {
+        using IServiceScope scope = _services.CreateScope();
+        CatalogDbContext context = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
+        Movie movie = await context.Set<Movie>().SingleAsync(m => m.Id == movieId);
+        movie.StartValidating(startedAtUtc);
+        await context.SaveChangesAsync();
+    }
+
+    private async Task<Movie> GetMovieAsync(Guid movieId)
+    {
+        using IServiceScope scope = _services.CreateScope();
+        CatalogDbContext context = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
+        return await context.Set<Movie>().SingleAsync(m => m.Id == movieId);
     }
 
     private sealed record CreatedResponse(Guid Id);
