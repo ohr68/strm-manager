@@ -1,5 +1,6 @@
 using Jellyfin.Plugin.StrmManager.Configuration;
 using Jellyfin.Plugin.StrmManager.Movies;
+using Jellyfin.Plugin.StrmManager.Processing;
 using Jellyfin.Plugin.StrmManager.StrmManagerClient;
 using MediaBrowser.Controller;
 using MediaBrowser.Controller.Plugins;
@@ -30,5 +31,14 @@ public sealed class PluginServiceRegistrator : IPluginServiceRegistrator
 
         // Pure composition over IStrmManagerClient (no HttpClient of its own) - stateless, so transient is fine.
         serviceCollection.AddTransient<IEnsureMovieService, EnsureMovieService>();
+
+        // P5: Process Movie background queue infrastructure. Both registrations resolve the SAME singleton
+        // instance - ProcessMovieWorker (constructor-injecting the concrete type, since it needs the internal
+        // Reader/Release members) and any future producer (through IProcessMovieQueue, enqueue-only) always share
+        // one queue. No product code calls IProcessMovieQueue yet - see the P5 report; the worker will simply wait
+        // on an empty queue.
+        serviceCollection.AddSingleton<ProcessMovieQueue>();
+        serviceCollection.AddSingleton<IProcessMovieQueue>(sp => sp.GetRequiredService<ProcessMovieQueue>());
+        serviceCollection.AddHostedService<ProcessMovieWorker>();
     }
 }
