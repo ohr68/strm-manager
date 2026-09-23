@@ -10,12 +10,24 @@ in a native Jellyfin details-page handoff. Plain HTML/CSS/JS, no frontend framew
 anywhere here - the backend Movie row stays the sole source of truth; a page reload simply loses the in-progress UI
 state and the user re-selects/re-clicks Assistir, which is safe and idempotent server-side.
 -->
-<div id="StrmManagerDiscoverPage" data-role="page" class="page type-interior pluginConfigurationPage" data-require="emby-button">
+<div id="StrmManagerDiscoverPage" data-role="page" class="page type-interior pluginConfigurationPage" data-require="emby-button,emby-input">
     <div data-role="content">
         <div class="content-primary">
             <div class="verticalSection">
                 <h2>STRM Manager / Discover</h2>
             </div>
+
+            <div class="strm-search">
+                <input is="emby-input" type="text" id="MovieSearchInput" class="strm-search-input" maxlength="100" placeholder="Buscar filmes..." />
+                <button is="emby-button" type="button" class="raised emby-button strm-search-button" id="MovieSearchButton">
+                    <span>Buscar</span>
+                </button>
+                <button is="emby-button" type="button" class="raised emby-button strm-search-clear-button" id="MovieSearchClearButton" hidden>
+                    <span>Limpar</span>
+                </button>
+            </div>
+
+            <div id="MovieSearchResultsContainer" hidden></div>
 
             <div id="MovieRowsContainer"></div>
 
@@ -34,6 +46,23 @@ state and the user re-selects/re-clicks Assistir, which is safe and idempotent s
     </div>
 
     <style>
+        #StrmManagerDiscoverPage .strm-search {
+            display: flex;
+            gap: 0.6em;
+            align-items: center;
+            margin: 1em 0 1.5em;
+            flex-wrap: wrap;
+        }
+
+        #StrmManagerDiscoverPage .strm-search-input {
+            max-width: 320px;
+        }
+
+        #StrmManagerDiscoverPage .strm-search-button,
+        #StrmManagerDiscoverPage .strm-search-clear-button {
+            width: auto;
+        }
+
         #StrmManagerDiscoverPage .strm-row {
             margin: 1.5em 0;
         }
@@ -211,6 +240,11 @@ state and the user re-selects/re-clicks Assistir, which is safe and idempotent s
             // watch/poll chain from a previously-selected movie can never overwrite or navigate for the current one.
             var selectionToken = 0;
 
+            // Bumped on every submitted search (UI-5c) - the same stale-response guard as selectionToken, scoped to
+            // the search results section only. An older search's response arriving after a newer one is simply
+            // discarded; it never touches the Watch pipeline above.
+            var searchRequestToken = 0;
+
             // Authenticated transport for every UI-3 plugin call - raw fetch(ApiClient.getUrl(path)) does NOT carry
             // Jellyfin's auth (proven the hard way: [Authorize(Policy = RequiresElevation)] rejects it with 401
             // before the controller action runs, exactly as already documented for the P0 spike/P5 real smoke).
@@ -347,6 +381,76 @@ state and the user re-selects/re-clicks Assistir, which is safe and idempotent s
                 }, function () {
                     showMessage(container, "STRM Manager is unavailable right now. Check the STRM Manager configuration page.");
                 });
+            }
+
+            // ---- Search (UI-5c) ----------------------------------------------------------------------------------
+            // Metadata-only, exactly like the catalog rows above: a search result feeds the same existing
+            // selectMovie -> detail -> Assistir path (renderMovies is reused unchanged), never AddMovie/EnsureMovie/
+            // ProcessMovie/scan on its own. The catalog rows below stay untouched and visible at all times; this
+            // only ever shows/hides its own #MovieSearchResultsContainer section above them.
+
+            function setSearchClearVisible(visible) {
+                document.querySelector("#MovieSearchClearButton").hidden = !visible;
+            }
+
+            // Builds one <h3> + one scroller, reusing the existing renderMovies for the cards - no second card/
+            // Assistir implementation.
+            function renderSearchResults(container, query, movies) {
+                container.innerHTML = "";
+
+                var heading = document.createElement("h3");
+                heading.className = "strm-row-title";
+                heading.textContent = "Resultados para “" + query + "”";
+                container.appendChild(heading);
+
+                var scroller = document.createElement("div");
+                scroller.className = "strm-row-scroller";
+                container.appendChild(scroller);
+
+                renderMovies(scroller, movies);
+            }
+
+            function runSearch() {
+                var input = document.querySelector("#MovieSearchInput");
+                var query = (input.value || "").trim();
+                var resultsContainer = document.querySelector("#MovieSearchResultsContainer");
+
+                searchRequestToken += 1;
+                var token = searchRequestToken;
+
+                if (!query) {
+                    resultsContainer.hidden = true;
+                    resultsContainer.innerHTML = "";
+                    setSearchClearVisible(false);
+                    return;
+                }
+
+                setSearchClearVisible(true);
+                resultsContainer.hidden = false;
+                showMessage(resultsContainer, "Buscando filmes...");
+
+                fetchJson("GET", "StrmManager/Catalog/Movies/Search?query=" + encodeURIComponent(query)).then(function (result) {
+                    if (token !== searchRequestToken) {
+                        return;
+                    }
+
+                    if (result.ok && result.body && result.body.movies) {
+                        if (result.body.movies.length === 0) {
+                            showMessage(resultsContainer, "Nenhum filme encontrado para “" + query + "”.");
+                            return;
+                        }
+
+                        renderSearchResults(resultsContainer, query, result.body.movies);
+                        return;
+                    }
+
+                    showMessage(resultsContainer, "Não foi possível buscar filmes agora.");
+                });
+            }
+
+            function clearSearch() {
+                document.querySelector("#MovieSearchInput").value = "";
+                runSearch();
             }
 
             // ---- Selection / detail state (UI-3b) --------------------------------------------------------------
@@ -516,6 +620,21 @@ state and the user re-selects/re-clicks Assistir, which is safe and idempotent s
                     pollForJellyfinItem(movie, token, startedAt);
                 }, LIBRARY_POLL_INTERVAL_MS);
             }
+
+            document.querySelector("#MovieSearchButton").addEventListener("click", function () {
+                runSearch();
+            });
+
+            document.querySelector("#MovieSearchClearButton").addEventListener("click", function () {
+                clearSearch();
+            });
+
+            document.querySelector("#MovieSearchInput").addEventListener("keydown", function (event) {
+                if (event.key === "Enter") {
+                    event.preventDefault();
+                    runSearch();
+                }
+            });
 
             document.querySelector("#StrmManagerDiscoverPage").addEventListener("pageshow", function () {
                 loadMovieRows();

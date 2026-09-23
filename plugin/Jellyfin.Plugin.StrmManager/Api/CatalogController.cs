@@ -77,4 +77,34 @@ public sealed class CatalogController(IStrmManagerClient client) : ControllerBas
             _ => StatusCode(StatusCodes.Status500InternalServerError),
         };
     }
+
+    /// <summary>
+    /// UI-5c's Discover search proxy. Pure pass-through like GetPopularMovies/GetMovieRows above - no
+    /// AddMovie/EnsureMovie/ProcessMovie/scan happens by searching, the browser only ever gets metadata cards back.
+    /// An empty query string reaches the backend as-is and comes back 400 (Invalid), same as the backend's own
+    /// validation contract - this action never pre-validates or trims itself.
+    /// </summary>
+    [HttpGet("Catalog/Movies/Search")]
+    public async Task<IActionResult> SearchMovies([FromQuery] string? query, CancellationToken cancellationToken)
+    {
+        SearchMoviesResult result = await client.SearchMoviesAsync(query ?? string.Empty, cancellationToken).ConfigureAwait(false);
+
+        return result switch
+        {
+            SearchMoviesResult.Found found => Ok(new
+            {
+                movies = found.Movies.Select(movie => new
+                {
+                    externalId = movie.ExternalId,
+                    title = movie.Title,
+                    year = movie.Year,
+                    posterUrl = movie.PosterUrl,
+                }),
+            }),
+            SearchMoviesResult.Invalid => BadRequest(),
+            SearchMoviesResult.Unreachable unreachable => StatusCode(StatusCodes.Status503ServiceUnavailable, new { reason = unreachable.Reason }),
+            SearchMoviesResult.Error error => StatusCode(StatusCodes.Status502BadGateway, new { reason = error.Reason }),
+            _ => StatusCode(StatusCodes.Status500InternalServerError),
+        };
+    }
 }

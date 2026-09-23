@@ -50,4 +50,12 @@ public interface IStrmManagerClient
     /// a result value.
     /// </summary>
     Task<MovieRowsResult> GetMovieRowsAsync(CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Calls GET {BaseUrl}/api/catalog/movies/search?query=... - UI-5c's Discover search box. Never throws for an
+    /// expected outcome - those are all represented in the returned <see cref="SearchMoviesResult"/>. A
+    /// cancellation requested by <paramref name="cancellationToken"/> propagates as a normal
+    /// <see cref="OperationCanceledException"/>, not as a result value.
+    /// </summary>
+    Task<SearchMoviesResult> SearchMoviesAsync(string query, CancellationToken cancellationToken);
 }

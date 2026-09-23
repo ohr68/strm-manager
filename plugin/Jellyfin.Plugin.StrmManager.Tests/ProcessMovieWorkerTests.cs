@@ -127,6 +127,9 @@ public sealed class ProcessMovieWorkerTests
 
         public Task<MovieRowsResult> GetMovieRowsAsync(CancellationToken cancellationToken) =>
             throw new NotSupportedException("ProcessMovieWorker does not call GetMovieRowsAsync.");
+
+        public Task<SearchMoviesResult> SearchMoviesAsync(string query, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("ProcessMovieWorker does not call SearchMoviesAsync.");
     }
 
     private sealed class FakeServiceScopeFactory(IStrmManagerClient client) : IServiceScopeFactory

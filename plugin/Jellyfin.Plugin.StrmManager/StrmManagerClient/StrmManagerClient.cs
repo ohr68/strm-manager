@@ -646,4 +646,100 @@ public sealed partial class StrmManagerClient(HttpClient httpClient, IHttpClient
 
         public List<CatalogMovieDto>? Movies { get; set; }
     }
+
+    public async Task<SearchMoviesResult> SearchMoviesAsync(string query, CancellationToken cancellationToken)
+    {
+        if (httpClient.BaseAddress is null)
+        {
+            LogSearchNoBaseUrl();
+            return new SearchMoviesResult.Error("STRM Manager BaseUrl is not configured.");
+        }
+
+        var requestUri = new Uri("api/catalog/movies/search?query=" + Uri.EscapeDataString(query), UriKind.Relative);
+
+        HttpResponseMessage response;
+        try
+        {
+            response = await httpClient.GetAsync(requestUri, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            LogSearchTimedOut();
+            return new SearchMoviesResult.Unreachable("Request timed out.");
+        }
+        catch (HttpRequestException exception)
+        {
+            LogSearchUnreachable(exception, exception.GetType().Name);
+            return new SearchMoviesResult.Unreachable(exception.GetType().Name);
+        }
+
+        using (response)
+        {
+            switch (response.StatusCode)
+            {
+                case HttpStatusCode.OK:
+                    return await ReadSearchAsync(response, cancellationToken).ConfigureAwait(false);
+                case HttpStatusCode.BadRequest:
+                    LogSearchInvalid();
+                    return new SearchMoviesResult.Invalid();
+                default:
+                    LogSearchUnexpectedStatus((int)response.StatusCode);
+                    return new SearchMoviesResult.Error($"Unexpected HTTP status {(int)response.StatusCode}.");
+            }
+        }
+    }
+
+    // Reuses PopularMoviesResponseDto/CatalogMovieDto - the backend's search response is the same
+    // {"movies": [...]} shape as GetPopularMoviesAsync/GetMovieRowsAsync's cards.
+    private async Task<SearchMoviesResult> ReadSearchAsync(HttpResponseMessage response, CancellationToken cancellationToken)
+    {
+        PopularMoviesResponseDto? dto;
+        try
+        {
+            dto = await response.Content.ReadFromJsonAsync<PopularMoviesResponseDto>(JsonOptions, cancellationToken).ConfigureAwait(false);
+        }
+        catch (JsonException exception)
+        {
+            LogSearchMalformedBody(exception);
+            return new SearchMoviesResult.Error("Malformed response body.");
+        }
+
+        if (dto?.Movies is null)
+        {
+            LogSearchUnexpectedShape();
+            return new SearchMoviesResult.Error("Unexpected response shape.");
+        }
+
+        List<CatalogMovie> movies = dto.Movies
+            .Where(item => !string.IsNullOrWhiteSpace(item.ExternalId) && !string.IsNullOrWhiteSpace(item.Title))
+            .Select(item => new CatalogMovie(item.ExternalId!, item.Title!, item.Year, item.PosterUrl))
+            .ToList();
+
+        LogSearchRetrieved(movies.Count);
+        return new SearchMoviesResult.Found(movies);
+    }
+
+    [LoggerMessage(Level = LogLevel.Error, Message = "STRM Manager movie search request skipped: no valid BaseUrl is configured")]
+    private partial void LogSearchNoBaseUrl();
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "STRM Manager movie search request timed out")]
+    private partial void LogSearchTimedOut();
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "STRM Manager movie search request failed to reach the server ({ExceptionType})")]
+    private partial void LogSearchUnreachable(Exception exception, string exceptionType);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "STRM Manager rejected the movie search query as invalid")]
+    private partial void LogSearchInvalid();
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "STRM Manager returned unexpected status {StatusCode} for movie search")]
+    private partial void LogSearchUnexpectedStatus(int statusCode);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "STRM Manager returned a malformed movie search body")]
+    private partial void LogSearchMalformedBody(Exception exception);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "STRM Manager returned an unexpected movie search body shape")]
+    private partial void LogSearchUnexpectedShape();
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "STRM Manager returned {MovieCount} movie search results")]
+    private partial void LogSearchRetrieved(int movieCount);
 }

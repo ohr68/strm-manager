@@ -149,5 +149,8 @@ public sealed class EnsureMovieServiceTests
 
         public Task<MovieRowsResult> GetMovieRowsAsync(CancellationToken cancellationToken) =>
             throw new NotSupportedException("EnsureMovieService does not call GetMovieRowsAsync.");
+
+        public Task<SearchMoviesResult> SearchMoviesAsync(string query, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("EnsureMovieService does not call SearchMoviesAsync.");
     }
 }
