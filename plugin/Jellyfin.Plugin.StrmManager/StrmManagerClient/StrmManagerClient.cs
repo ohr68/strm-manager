@@ -538,4 +538,112 @@ public sealed partial class StrmManagerClient(HttpClient httpClient, IHttpClient
 
         public string? PosterUrl { get; set; }
     }
+
+    public async Task<MovieRowsResult> GetMovieRowsAsync(CancellationToken cancellationToken)
+    {
+        if (httpClient.BaseAddress is null)
+        {
+            LogRowsNoBaseUrl();
+            return new MovieRowsResult.Error("STRM Manager BaseUrl is not configured.");
+        }
+
+        HttpResponseMessage response;
+        try
+        {
+            response = await httpClient.GetAsync(new Uri("api/catalog/movies/rows", UriKind.Relative), cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            LogRowsTimedOut();
+            return new MovieRowsResult.Unreachable("Request timed out.");
+        }
+        catch (HttpRequestException exception)
+        {
+            LogRowsUnreachable(exception, exception.GetType().Name);
+            return new MovieRowsResult.Unreachable(exception.GetType().Name);
+        }
+
+        using (response)
+        {
+            if (response.StatusCode != HttpStatusCode.OK)
+            {
+                LogRowsUnexpectedStatus((int)response.StatusCode);
+                return new MovieRowsResult.Error($"Unexpected HTTP status {(int)response.StatusCode}.");
+            }
+
+            return await ReadRowsAsync(response, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private async Task<MovieRowsResult> ReadRowsAsync(HttpResponseMessage response, CancellationToken cancellationToken)
+    {
+        MovieRowsResponseDto? dto;
+        try
+        {
+            dto = await response.Content.ReadFromJsonAsync<MovieRowsResponseDto>(JsonOptions, cancellationToken).ConfigureAwait(false);
+        }
+        catch (JsonException exception)
+        {
+            LogRowsMalformedBody(exception);
+            return new MovieRowsResult.Error("Malformed response body.");
+        }
+
+        if (dto?.Rows is null)
+        {
+            LogRowsUnexpectedShape();
+            return new MovieRowsResult.Error("Unexpected response shape.");
+        }
+
+        // Skip a row missing what it needs (id/name) rather than failing the whole response - same skip-not-fail
+        // rule GetPopularMoviesAsync/CinemetaCatalogMapper already follow. A row's own movies follow the same rule.
+        List<MovieRow> rows = dto.Rows
+            .Where(row => !string.IsNullOrWhiteSpace(row.Id) && !string.IsNullOrWhiteSpace(row.Name))
+            .Select(row => new MovieRow(
+                row.Id!,
+                row.Name!,
+                (row.Movies ?? [])
+                    .Where(item => !string.IsNullOrWhiteSpace(item.ExternalId) && !string.IsNullOrWhiteSpace(item.Title))
+                    .Select(item => new CatalogMovie(item.ExternalId!, item.Title!, item.Year, item.PosterUrl))
+                    .ToList()))
+            .ToList();
+
+        LogRowsRetrieved(rows.Count);
+        return new MovieRowsResult.Found(rows);
+    }
+
+    [LoggerMessage(Level = LogLevel.Error, Message = "STRM Manager movie rows request skipped: no valid BaseUrl is configured")]
+    private partial void LogRowsNoBaseUrl();
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "STRM Manager movie rows request timed out")]
+    private partial void LogRowsTimedOut();
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "STRM Manager movie rows request failed to reach the server ({ExceptionType})")]
+    private partial void LogRowsUnreachable(Exception exception, string exceptionType);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "STRM Manager returned unexpected status {StatusCode} for movie rows")]
+    private partial void LogRowsUnexpectedStatus(int statusCode);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "STRM Manager returned a malformed movie rows body")]
+    private partial void LogRowsMalformedBody(Exception exception);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "STRM Manager returned an unexpected movie rows body shape")]
+    private partial void LogRowsUnexpectedShape();
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "STRM Manager returned {RowCount} movie rows")]
+    private partial void LogRowsRetrieved(int rowCount);
+
+    /// <summary>Only the fields MovieRow needs; matches the backend's own MovieRowsResponse.</summary>
+    private sealed class MovieRowsResponseDto
+    {
+        public List<MovieRowDto>? Rows { get; set; }
+    }
+
+    private sealed class MovieRowDto
+    {
+        public string? Id { get; set; }
+
+        public string? Name { get; set; }
+
+        public List<CatalogMovieDto>? Movies { get; set; }
+    }
 }

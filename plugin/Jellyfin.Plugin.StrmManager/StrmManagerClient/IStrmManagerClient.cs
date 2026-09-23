@@ -41,4 +41,13 @@ public interface IStrmManagerClient
     /// <see cref="OperationCanceledException"/>, not as a result value.
     /// </summary>
     Task<CatalogMoviesResult> GetPopularMoviesAsync(CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Calls GET {BaseUrl}/api/catalog/movies/rows - UI-4's multi-row Discover presentation (Popular plus whichever
+    /// genre rows the backend's own row policy currently has movies for). Never throws for an expected outcome -
+    /// those are all represented in the returned <see cref="MovieRowsResult"/>. A cancellation requested by
+    /// <paramref name="cancellationToken"/> propagates as a normal <see cref="OperationCanceledException"/>, not as
+    /// a result value.
+    /// </summary>
+    Task<MovieRowsResult> GetMovieRowsAsync(CancellationToken cancellationToken);
 }

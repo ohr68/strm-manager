@@ -1,12 +1,14 @@
 <!--
-UI-2/UI-3b: the plugin's catalog + watch page (see Plugin.cs.GetPages()) - a separate page from
-configurationpage.html, not a section grafted onto it, since browsing/configuring are different concerns. One
-horizontal "Popular Movies" row of poster cards (UI-2); clicking a card (UI-3b) reveals a detail/watch state that
-composes the UI-3a endpoints (Watch, the existing By-Imdb poll, Libraries/Scan, Libraries/Movies/By-Imdb) into a
-friendly Portuguese status flow ending in a native Jellyfin details-page handoff. Plain HTML/CSS/JS, no frontend
-framework, CSS scoped under #StrmManagerDiscoverPage rather than reusing/copying Jellyfin Web's own stylesheet. No
-plugin-side persistence anywhere here - the backend Movie row stays the sole source of truth; a page reload simply
-loses the in-progress UI state and the user re-selects/re-clicks Assistir, which is safe and idempotent server-side.
+UI-2/UI-3b/UI-4b: the plugin's catalog + watch page (see Plugin.cs.GetPages()) - a separate page from
+configurationpage.html, not a section grafted onto it, since browsing/configuring are different concerns. Multiple
+horizontal movie rows (UI-4, e.g. Popular/Action/Comedy/Drama/Horror) of poster cards - row identity/order/which
+rows exist is entirely the backend's decision (see StrmManager/Catalog/Movies/Rows); this page never filters or
+invents rows itself. Clicking a card (UI-3b) reveals a detail/watch state that composes the UI-3a endpoints (Watch,
+the existing By-Imdb poll, Libraries/Scan, Libraries/Movies/By-Imdb) into a friendly Portuguese status flow ending
+in a native Jellyfin details-page handoff. Plain HTML/CSS/JS, no frontend framework, CSS scoped under
+#StrmManagerDiscoverPage rather than reusing/copying Jellyfin Web's own stylesheet. No plugin-side persistence
+anywhere here - the backend Movie row stays the sole source of truth; a page reload simply loses the in-progress UI
+state and the user re-selects/re-clicks Assistir, which is safe and idempotent server-side.
 -->
 <div id="StrmManagerDiscoverPage" data-role="page" class="page type-interior pluginConfigurationPage" data-require="emby-button">
     <div data-role="content">
@@ -15,12 +17,7 @@ loses the in-progress UI state and the user re-selects/re-clicks Assistir, which
                 <h2>STRM Manager / Discover</h2>
             </div>
 
-            <div class="strm-row">
-                <h3 class="strm-row-title">Popular Movies</h3>
-                <div class="strm-row-scroller" id="PopularMoviesScroller">
-                    <div class="strm-row-message">Loading&hellip;</div>
-                </div>
-            </div>
+            <div id="MovieRowsContainer"></div>
 
             <div class="strm-detail" id="MovieDetail" hidden>
                 <div class="strm-detail-poster-wrap" id="MovieDetailPosterWrap"></div>
@@ -309,21 +306,46 @@ loses the in-progress UI state and the user re-selects/re-clicks Assistir, which
                 container.appendChild(message);
             }
 
-            function loadPopularMovies() {
-                var scroller = document.querySelector("#PopularMoviesScroller");
-                showMessage(scroller, "Loading…");
+            // Builds one <h3> + one scroller per row and hands the scroller straight to the existing, unchanged
+            // renderMovies - this function does not filter, re-order, or invent rows; the backend already decided
+            // row identity/order/which rows exist (see StrmManager/Catalog/Movies/Rows).
+            function renderRows(container, rows) {
+                container.innerHTML = "";
 
-                ApiClient.getJSON(ApiClient.getUrl("StrmManager/Catalog/Movies/Popular")).then(function (data) {
-                    var movies = (data && data.movies) || [];
+                rows.forEach(function (row) {
+                    var rowElement = document.createElement("div");
+                    rowElement.className = "strm-row";
 
-                    if (movies.length === 0) {
-                        showMessage(scroller, "No movies to show yet.");
+                    var heading = document.createElement("h3");
+                    heading.className = "strm-row-title";
+                    heading.textContent = row.name || "";
+                    rowElement.appendChild(heading);
+
+                    var scroller = document.createElement("div");
+                    scroller.className = "strm-row-scroller";
+                    rowElement.appendChild(scroller);
+
+                    container.appendChild(rowElement);
+
+                    renderMovies(scroller, row.movies || []);
+                });
+            }
+
+            function loadMovieRows() {
+                var container = document.querySelector("#MovieRowsContainer");
+                showMessage(container, "Loading…");
+
+                ApiClient.getJSON(ApiClient.getUrl("StrmManager/Catalog/Movies/Rows")).then(function (data) {
+                    var rows = (data && data.rows) || [];
+
+                    if (rows.length === 0) {
+                        showMessage(container, "No movies to show yet.");
                         return;
                     }
 
-                    renderMovies(scroller, movies);
+                    renderRows(container, rows);
                 }, function () {
-                    showMessage(scroller, "STRM Manager is unavailable right now. Check the STRM Manager configuration page.");
+                    showMessage(container, "STRM Manager is unavailable right now. Check the STRM Manager configuration page.");
                 });
             }
 
@@ -496,7 +518,7 @@ loses the in-progress UI state and the user re-selects/re-clicks Assistir, which
             }
 
             document.querySelector("#StrmManagerDiscoverPage").addEventListener("pageshow", function () {
-                loadPopularMovies();
+                loadMovieRows();
             });
         })();
     </script>

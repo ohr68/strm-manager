@@ -202,5 +202,8 @@ public sealed class MoviesControllerWatchTests
 
         public Task<CatalogMoviesResult> GetPopularMoviesAsync(CancellationToken cancellationToken) =>
             throw new NotSupportedException("Watch must not call GetPopularMoviesAsync.");
+
+        public Task<MovieRowsResult> GetMovieRowsAsync(CancellationToken cancellationToken) =>
+            throw new NotSupportedException("Watch must not call GetMovieRowsAsync.");
     }
 }

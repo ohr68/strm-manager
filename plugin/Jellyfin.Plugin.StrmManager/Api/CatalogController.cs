@@ -44,4 +44,37 @@ public sealed class CatalogController(IStrmManagerClient client) : ControllerBas
             _ => StatusCode(StatusCodes.Status500InternalServerError),
         };
     }
+
+    /// <summary>
+    /// UI-4's multi-row Discover proxy. Pure pass-through, same as GetPopularMovies above (kept for compatibility,
+    /// unchanged) - row identity/order/which rows exist is entirely the backend's decision (see UI-4a's
+    /// MovieRowPolicy); this action never filters, re-orders, or invents rows.
+    /// </summary>
+    [HttpGet("Catalog/Movies/Rows")]
+    public async Task<IActionResult> GetMovieRows(CancellationToken cancellationToken)
+    {
+        MovieRowsResult result = await client.GetMovieRowsAsync(cancellationToken).ConfigureAwait(false);
+
+        return result switch
+        {
+            MovieRowsResult.Found found => Ok(new
+            {
+                rows = found.Rows.Select(row => new
+                {
+                    id = row.Id,
+                    name = row.Name,
+                    movies = row.Movies.Select(movie => new
+                    {
+                        externalId = movie.ExternalId,
+                        title = movie.Title,
+                        year = movie.Year,
+                        posterUrl = movie.PosterUrl,
+                    }),
+                }),
+            }),
+            MovieRowsResult.Unreachable unreachable => StatusCode(StatusCodes.Status503ServiceUnavailable, new { reason = unreachable.Reason }),
+            MovieRowsResult.Error error => StatusCode(StatusCodes.Status502BadGateway, new { reason = error.Reason }),
+            _ => StatusCode(StatusCodes.Status500InternalServerError),
+        };
+    }
 }
