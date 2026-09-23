@@ -134,11 +134,7 @@ public static class CatalogModule
             .ValidateDataAnnotations()
             .ValidateOnStart();
 
-        services.AddHttpClient<IMetadataProvider, CinemetaMetadataProvider>((sp, client) =>
-            {
-                CinemetaOptions options = sp.GetRequiredService<IOptions<CinemetaOptions>>().Value;
-                client.BaseAddress = new Uri(options.BaseUrl);
-            })
+        services.AddHttpClient<IMetadataProvider, CinemetaMetadataProvider>(ConfigureCinemetaBaseAddress)
             // One layer owns HTTP resilience (here) - CinemetaMetadataProvider itself
             // never retries. Conservative on purpose: a handful of retries with a short
             // overall timeout, and 4xx (including 404 "series not found") is never
@@ -159,5 +155,30 @@ public static class CatalogModule
                     UseJitter = true,
                 });
             });
+
+        // UI-2's "Popular Movies" row (ICatalogProvider) is the same Cinemeta addon, a different resource
+        // (catalog/movie/top.json, not meta/movie/{id}.json) - its own typed client, same BaseUrl/resilience shape
+        // as the metadata client above, not a new provider. Verified live before implementation (see the UI-2
+        // report) rather than assumed.
+        services.AddHttpClient<ICatalogProvider, CinemetaCatalogProvider>(ConfigureCinemetaBaseAddress)
+            .AddResilienceHandler("cinemeta-catalog", (builder, context) =>
+            {
+                CinemetaOptions options = context.ServiceProvider.GetRequiredService<IOptions<CinemetaOptions>>().Value;
+
+                builder.AddTimeout(TimeSpan.FromSeconds(options.TimeoutSeconds));
+                builder.AddRetry(new HttpRetryStrategyOptions
+                {
+                    MaxRetryAttempts = 2,
+                    BackoffType = DelayBackoffType.Exponential,
+                    Delay = TimeSpan.FromMilliseconds(200),
+                    UseJitter = true,
+                });
+            });
+    }
+
+    private static void ConfigureCinemetaBaseAddress(IServiceProvider sp, HttpClient client)
+    {
+        CinemetaOptions options = sp.GetRequiredService<IOptions<CinemetaOptions>>().Value;
+        client.BaseAddress = new Uri(options.BaseUrl);
     }
 }

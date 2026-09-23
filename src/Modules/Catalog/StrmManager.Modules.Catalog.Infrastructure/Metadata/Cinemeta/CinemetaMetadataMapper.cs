@@ -166,7 +166,8 @@ internal static partial class CinemetaMetadataMapper
         return false;
     }
 
-    private static bool TryParseYear(string? releaseInfo, out int year)
+    /// <summary>Internal (not private) so CinemetaCatalogMapper can reuse the exact same year-extraction rule for catalog previews.</summary>
+    internal static bool TryParseYear(string? releaseInfo, out int year)
     {
         if (!string.IsNullOrWhiteSpace(releaseInfo))
         {
