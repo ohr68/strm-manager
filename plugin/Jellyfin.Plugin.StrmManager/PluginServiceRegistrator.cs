@@ -1,4 +1,5 @@
 using Jellyfin.Plugin.StrmManager.Configuration;
+using Jellyfin.Plugin.StrmManager.Movies;
 using Jellyfin.Plugin.StrmManager.StrmManagerClient;
 using MediaBrowser.Controller;
 using MediaBrowser.Controller.Plugins;
@@ -26,5 +27,8 @@ public sealed class PluginServiceRegistrator : IPluginServiceRegistrator
             // If invalid/unset, BaseAddress stays null; StrmManagerClient checks for that and returns
             // MovieLookupResult.Error rather than throwing.
         });
+
+        // Pure composition over IStrmManagerClient (no HttpClient of its own) - stateless, so transient is fine.
+        serviceCollection.AddTransient<IEnsureMovieService, EnsureMovieService>();
     }
 }
