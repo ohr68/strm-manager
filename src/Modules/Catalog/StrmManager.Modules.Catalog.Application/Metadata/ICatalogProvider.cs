@@ -12,4 +12,10 @@ namespace StrmManager.Modules.Catalog.Application.Metadata;
 public interface ICatalogProvider
 {
     Task<Result<IReadOnlyList<CatalogMovie>>> GetPopularMoviesAsync(int limit, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Free-text movie search (UI-5b) - Cinemeta's movie/top catalog with a "search" extra, verified live before
+    /// implementation (UI-5a). No results is a successful empty list, never a failure.
+    /// </summary>
+    Task<Result<IReadOnlyList<CatalogMovie>>> SearchMoviesAsync(string query, int limit, CancellationToken cancellationToken = default);
 }

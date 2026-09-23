@@ -161,4 +161,66 @@ public class CinemetaCatalogProviderTests
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => task);
     }
+
+    // ---- UI-5b: SearchMoviesAsync. Failure modes (timeout/network/malformed/cancellation) share GetPopularMoviesAsync's
+    // exact try/catch structure and are not re-verified here - see the discovery report.
+
+    [Fact]
+    public async Task SearchMoviesAsync_SuccessfulResponse_RequestsTheEncodedSearchUrl_AndMapsResults()
+    {
+        HttpRequestMessage? captured = null;
+        var handler = new FakeHttpMessageHandler((request, _) =>
+        {
+            captured = request;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(LoadFixture("catalog-movies-search-dark-knight.json")),
+            });
+        });
+
+        Result<IReadOnlyList<CatalogMovie>> result = await CreateProvider(handler).SearchMoviesAsync("The Dark Knight", 20);
+
+        Assert.NotNull(captured);
+        Assert.Equal(
+            "https://cinemeta.example.invalid/catalog/movie/top/search=The%20Dark%20Knight.json",
+            captured.RequestUri!.AbsoluteUri);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(2, result.Value.Count);
+        CatalogMovie first = result.Value[0];
+        Assert.Equal("tt0468569", first.ExternalId);
+        Assert.Equal("The Dark Knight", first.Title);
+        Assert.Equal(2008, first.Year);
+        Assert.Equal("https://images.metahub.space/poster/small/tt0468569/img", first.PosterUrl);
+    }
+
+    [Fact]
+    public async Task SearchMoviesAsync_NoMatches_ReturnsSuccessfulEmptyList_NotAFailure()
+    {
+        const string body = """{"query":"zzzzstrmmanagerthismoviedoesnotexist99999","rank":0,"cacheMaxAge":86400,"metas":[]}""";
+        var handler = new FakeHttpMessageHandler((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(body),
+        }));
+
+        Result<IReadOnlyList<CatalogMovie>> result = await CreateProvider(handler).SearchMoviesAsync("zzzzstrmmanagerthismoviedoesnotexist99999", 20);
+
+        Assert.True(result.IsSuccess);
+        Assert.Empty(result.Value);
+    }
+
+    [Fact]
+    public async Task SearchMoviesAsync_MoreItemsThanLimit_ReturnsOnlyLimitCount_PreservingProviderOrder()
+    {
+        var handler = new FakeHttpMessageHandler((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(LoadFixture("catalog-movies-search-dark-knight.json")),
+        }));
+
+        Result<IReadOnlyList<CatalogMovie>> result = await CreateProvider(handler).SearchMoviesAsync("The Dark Knight", 1);
+
+        Assert.True(result.IsSuccess);
+        Assert.Single(result.Value);
+        Assert.Equal("tt0468569", result.Value[0].ExternalId);
+    }
 }

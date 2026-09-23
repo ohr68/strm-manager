@@ -1,0 +1,19 @@
+{
+  "query": "The Dark Knight",
+  "metas": [
+    {
+      "id": "tt0468569",
+      "type": "movie",
+      "name": "The Dark Knight",
+      "poster": "https://images.metahub.space/poster/small/tt0468569/img",
+      "releaseInfo": "2008"
+    },
+    {
+      "id": "tt1345836",
+      "type": "movie",
+      "name": "The Dark Knight Rises",
+      "poster": "https://images.metahub.space/poster/small/tt1345836/img",
+      "releaseInfo": "2012"
+    }
+  ]
+}
