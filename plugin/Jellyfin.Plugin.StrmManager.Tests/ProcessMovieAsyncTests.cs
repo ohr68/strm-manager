@@ -19,7 +19,14 @@ public sealed class ProcessMovieAsyncTests
         Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> handle)
     {
         var httpClient = new HttpClient(new FakeHandler(handle)) { BaseAddress = new Uri("http://strm-manager.test/") };
-        return new StrmManagerClient.StrmManagerClient(httpClient, NullLogger<StrmManagerClient.StrmManagerClient>.Instance);
+
+        // ProcessMovieAsync now resolves its transport through IHttpClientFactory (see the timeout-isolation
+        // report) - the factory here hands back a client wired to the SAME fake handler, so every existing
+        // scenario below keeps exercising the exact response it was written for.
+        var factory = new RecordingHttpClientFactory(_ =>
+            new HttpClient(new FakeHandler(handle)) { BaseAddress = new Uri("http://strm-manager.test/") });
+
+        return new StrmManagerClient.StrmManagerClient(httpClient, factory, NullLogger<StrmManagerClient.StrmManagerClient>.Instance);
     }
 
     private static HttpResponseMessage JsonResponse(HttpStatusCode status, string body) =>
@@ -120,9 +127,68 @@ public sealed class ProcessMovieAsyncTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => client.ProcessMovieAsync(MovieId, cts.Token));
     }
 
+    [Fact]
+    public async Task ProcessMovieAsync_RequestsTheDedicatedNamedHttpClient_NotTheOrdinaryInjectedOne()
+    {
+        var factory = new RecordingHttpClientFactory(_ =>
+            new HttpClient(new FakeHandler((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound))))
+            {
+                BaseAddress = new Uri("http://strm-manager.test/"),
+            });
+        var ordinaryHttpClient = new HttpClient(new FakeHandler((_, _) =>
+            throw new InvalidOperationException("ProcessMovieAsync must not use the ordinary injected HttpClient.")))
+        {
+            BaseAddress = new Uri("http://strm-manager.test/"),
+        };
+        var client = new StrmManagerClient.StrmManagerClient(ordinaryHttpClient, factory, NullLogger<StrmManagerClient.StrmManagerClient>.Instance);
+
+        await client.ProcessMovieAsync(MovieId, CancellationToken.None);
+
+        Assert.Equal([StrmManagerClient.StrmManagerClient.ProcessMovieHttpClientName], factory.RequestedNames);
+    }
+
+    [Theory]
+    [InlineData(true)] // GetByImdbIdAsync
+    [InlineData(false)] // AddMovieAsync
+    public async Task OrdinaryMetadataCalls_NeverUseTheHttpClientFactory(bool useLookup)
+    {
+        var factory = new RecordingHttpClientFactory(_ =>
+            new HttpClient(new FakeHandler((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK))))
+            {
+                BaseAddress = new Uri("http://strm-manager.test/"),
+            });
+        var httpClient = new HttpClient(new FakeHandler((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound))))
+        {
+            BaseAddress = new Uri("http://strm-manager.test/"),
+        };
+        var client = new StrmManagerClient.StrmManagerClient(httpClient, factory, NullLogger<StrmManagerClient.StrmManagerClient>.Instance);
+
+        if (useLookup)
+        {
+            await client.GetByImdbIdAsync("tt0137523", CancellationToken.None);
+        }
+        else
+        {
+            await client.AddMovieAsync("tt0137523", CancellationToken.None);
+        }
+
+        Assert.Empty(factory.RequestedNames);
+    }
+
     private sealed class FakeHandler(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> handle) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
             handle(request, cancellationToken);
+    }
+
+    private sealed class RecordingHttpClientFactory(Func<string, HttpClient> createClient) : IHttpClientFactory
+    {
+        public List<string> RequestedNames { get; } = [];
+
+        public HttpClient CreateClient(string name)
+        {
+            RequestedNames.Add(name);
+            return createClient(name);
+        }
     }
 }

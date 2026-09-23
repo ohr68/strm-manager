@@ -17,7 +17,16 @@ public sealed class StrmManagerClientTests
         Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> handle)
     {
         var httpClient = new HttpClient(new FakeHandler(handle)) { BaseAddress = new Uri("http://strm-manager.test/") };
-        return new StrmManagerClient.StrmManagerClient(httpClient, NullLogger<StrmManagerClient.StrmManagerClient>.Instance);
+        return new StrmManagerClient.StrmManagerClient(httpClient, new NeverCalledHttpClientFactory(), NullLogger<StrmManagerClient.StrmManagerClient>.Instance);
+    }
+
+    /// <summary>
+    /// GetByImdbIdAsync never uses IHttpClientFactory (only ProcessMovieAsync does - see ProcessMovieAsyncTests.cs)
+    /// - a throwing fake makes any accidental future use of it here fail loudly instead of silently.
+    /// </summary>
+    private sealed class NeverCalledHttpClientFactory : IHttpClientFactory
+    {
+        public HttpClient CreateClient(string name) => throw new NotSupportedException("GetByImdbIdAsync must not use IHttpClientFactory.");
     }
 
     private static HttpResponseMessage JsonResponse(HttpStatusCode status, string body) =>

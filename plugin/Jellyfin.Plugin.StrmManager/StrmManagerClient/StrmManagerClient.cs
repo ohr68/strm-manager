@@ -17,8 +17,15 @@ namespace Jellyfin.Plugin.StrmManager.StrmManagerClient;
 /// contract has no such field, but this class does not rely on that - it only ever logs the specific values named
 /// above, never response content wholesale.
 /// </summary>
-public sealed partial class StrmManagerClient(HttpClient httpClient, ILogger<StrmManagerClient> logger) : IStrmManagerClient
+public sealed partial class StrmManagerClient(HttpClient httpClient, IHttpClientFactory httpClientFactory, ILogger<StrmManagerClient> logger) : IStrmManagerClient
 {
+    /// <summary>
+    /// Name of the dedicated named HttpClient (see PluginServiceRegistrator) that ProcessMovieAsync alone uses -
+    /// same BaseUrl rules as the ordinary typed <see cref="HttpClient"/> above, but with no client-side timeout,
+    /// since that POST can legitimately run far longer than the fast metadata calls this class also makes.
+    /// </summary>
+    public const string ProcessMovieHttpClientName = "StrmManagerProcessMovie";
+
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     public async Task<MovieLookupResult> GetByImdbIdAsync(string imdbId, CancellationToken cancellationToken)
@@ -247,7 +254,11 @@ public sealed partial class StrmManagerClient(HttpClient httpClient, ILogger<Str
 
     public async Task<ProcessMovieResult> ProcessMovieAsync(Guid movieId, CancellationToken cancellationToken)
     {
-        if (httpClient.BaseAddress is null)
+        // A fresh instance every call, by design (see IHttpClientFactory) - not held as a field, so the same
+        // BaseUrl-refresh behavior the ordinary typed client already has applies here too, on every invocation.
+        HttpClient processMovieClient = httpClientFactory.CreateClient(ProcessMovieHttpClientName);
+
+        if (processMovieClient.BaseAddress is null)
         {
             LogProcessNoBaseUrl(movieId);
             return new ProcessMovieResult.Error("STRM Manager BaseUrl is not configured.");
@@ -258,7 +269,7 @@ public sealed partial class StrmManagerClient(HttpClient httpClient, ILogger<Str
         HttpResponseMessage response;
         try
         {
-            response = await httpClient.PostAsync(requestUri, content: null, cancellationToken).ConfigureAwait(false);
+            response = await processMovieClient.PostAsync(requestUri, content: null, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
