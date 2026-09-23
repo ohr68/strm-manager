@@ -4,9 +4,10 @@ using MediaBrowser.Model.Entities;
 namespace Jellyfin.Plugin.StrmManager.Tests;
 
 /// <summary>
-/// Focused unit tests for LibrariesController.ProjectLibraries - the only real logic UI-1's library endpoint has.
-/// Tested directly against real VirtualFolderInfo instances (a plain model type, trivially constructible) rather
-/// than through the controller action, since faking ILibraryManager itself for one call would be disproportionate.
+/// Focused unit tests for LibrariesController's pure logic only. ILibraryManager.GetItemList (FindMovieByImdbId)
+/// and QueueLibraryScan (ScanLibraries) are NOT unit-tested here - ILibraryManager is far too large an interface
+/// to meaningfully stub for these actions (same reasoning already established for GetLibraries/ProjectLibraries).
+/// This is a deliberate coverage boundary, verified only by a real Jellyfin smoke check, not a gap.
 /// </summary>
 public sealed class LibrariesControllerTests
 {
@@ -32,5 +33,17 @@ public sealed class LibrariesControllerTests
         IReadOnlyList<LibraryOption> result = LibrariesController.ProjectLibraries([mixed]);
 
         Assert.Null(Assert.Single(result).CollectionType);
+    }
+
+    [Theory]
+    [InlineData("tt0137523", true)]
+    [InlineData("tt0111161", true)]
+    [InlineData("tt12345678", true)]
+    [InlineData("tt123", false)]
+    [InlineData("not-an-imdb-id", false)]
+    [InlineData("", false)]
+    public void IsValidImdbId_MatchesTheEstablishedPattern(string imdbId, bool expected)
+    {
+        Assert.Equal(expected, LibrariesController.IsValidImdbId(imdbId));
     }
 }

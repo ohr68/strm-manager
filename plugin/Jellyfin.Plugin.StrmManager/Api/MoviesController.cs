@@ -109,4 +109,91 @@ public sealed partial class MoviesController(
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Process Movie enqueue {MovieId}: {QueueStatus}")]
     private partial void LogEnqueueResult(Guid movieId, ProcessMovieEnqueueResult queueStatus);
+
+    /// <summary>
+    /// UI-3a's watch-intent coordinator: composes EnsureMovieService (lookup-or-add) with the P5 queue
+    /// (TryEnqueue), returning the current backend Movie snapshot so the browser (UI-3b) can start/continue
+    /// polling GetByImdbId - the backend Movie row stays the sole source of truth, this action holds no state of
+    /// its own. Enqueues only when the resulting status is Pending; every other status (Scheduled/Searching/
+    /// Validating/Completed/Unavailable/Error) is left exactly as the backend already has it - no retries, no
+    /// re-queuing work already underway or already finished.
+    /// </summary>
+    [HttpPost("Movies/Watch/{imdbId}")]
+    public async Task<IActionResult> Watch(string imdbId, CancellationToken cancellationToken)
+    {
+        EnsureMovieResult ensureResult = await ensureMovieService.EnsureMovieAsync(imdbId, cancellationToken).ConfigureAwait(false);
+
+        Guid movieId;
+        string status;
+
+        switch (ensureResult)
+        {
+            case EnsureMovieResult.Existing existing:
+                movieId = existing.MovieId;
+                status = existing.Status;
+                break;
+
+            case EnsureMovieResult.Created created:
+                // AddMovie's own response never carries a status - the backend Movie row is the only authoritative
+                // source right after creation, so it is looked up rather than assumed Pending (a future release
+                // date would make it Scheduled instead - see the eligibility check below).
+                MovieLookupResult lookup = await client.GetByImdbIdAsync(imdbId, cancellationToken).ConfigureAwait(false);
+
+                if (lookup is not MovieLookupResult.Found found)
+                {
+                    LogWatchLookupAfterCreateFailed(imdbId, created.MovieId, lookup.GetType().Name);
+                    return lookup switch
+                    {
+                        MovieLookupResult.Unreachable unreachable => StatusCode(StatusCodes.Status503ServiceUnavailable, new { reason = unreachable.Reason }),
+                        _ => StatusCode(StatusCodes.Status502BadGateway, new { reason = "Movie was created but its status could not be confirmed." }),
+                    };
+                }
+
+                movieId = found.MovieId;
+                status = found.Status;
+                break;
+
+            case EnsureMovieResult.Invalid:
+                return BadRequest();
+            case EnsureMovieResult.NotFound:
+                return NotFound();
+            case EnsureMovieResult.Unreachable unreachable:
+                return StatusCode(StatusCodes.Status503ServiceUnavailable, new { reason = unreachable.Reason });
+            case EnsureMovieResult.Error error:
+                return StatusCode(StatusCodes.Status502BadGateway, new { reason = error.Reason });
+            default:
+                return StatusCode(StatusCodes.Status500InternalServerError);
+        }
+
+        if (!string.Equals(status, "Pending", StringComparison.Ordinal))
+        {
+            // Scheduled/Searching/Validating/Completed/Unavailable/Error: nothing to enqueue - either not eligible
+            // yet, already in flight, or already at a terminal outcome. The browser polls GetByImdbId either way.
+            LogWatchNotEligible(imdbId, movieId, status);
+            return Accepted(new { movieId, imdbId, status });
+        }
+
+        ProcessMovieEnqueueResult queueResult = processMovieQueue.TryEnqueue(movieId);
+        LogWatchEnqueued(imdbId, movieId, status, queueResult);
+
+        return queueResult switch
+        {
+            // AlreadyQueued is not a user-visible conflict here - the desired preparation is already queued,
+            // which is exactly what Watch was asked to achieve.
+            ProcessMovieEnqueueResult.Accepted or ProcessMovieEnqueueResult.AlreadyQueued =>
+                Accepted(new { movieId, imdbId, status }),
+            ProcessMovieEnqueueResult.Full =>
+                StatusCode(StatusCodes.Status429TooManyRequests, new { movieId, imdbId, status }),
+            _ => StatusCode(StatusCodes.Status500InternalServerError),
+        };
+    }
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Watch {ImdbId}: movie {MovieId} status {Status}, not eligible to enqueue")]
+    private partial void LogWatchNotEligible(string imdbId, Guid movieId, string status);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Watch {ImdbId}: movie {MovieId} status {Status}, queue outcome {QueueOutcome}")]
+    private partial void LogWatchEnqueued(string imdbId, Guid movieId, string status, ProcessMovieEnqueueResult queueOutcome);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Watch {ImdbId}: movie {MovieId} was created but the follow-up status lookup failed ({LookupOutcome})")]
+    private partial void LogWatchLookupAfterCreateFailed(string imdbId, Guid movieId, string lookupOutcome);
 }

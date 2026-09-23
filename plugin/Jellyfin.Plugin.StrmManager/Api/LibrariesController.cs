@@ -1,8 +1,14 @@
+using System.Text.RegularExpressions;
+using Jellyfin.Data.Enums;
 using MediaBrowser.Common.Api;
+using MediaBrowser.Controller.Dto;
+using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Entities;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using JfMetadataProvider = MediaBrowser.Model.Entities.MetadataProvider;
 
 namespace Jellyfin.Plugin.StrmManager.Api;
 
@@ -31,6 +37,59 @@ public sealed class LibrariesController(ILibraryManager libraryManager) : Contro
         libraries
             .Select(library => new LibraryOption(library.ItemId, library.Name, library.CollectionType?.ToString()))
             .ToList();
+
+    /// <summary>
+    /// UI-3a: lets the browser ask Jellyfin to rescan after a Movie reaches Completed (a real .strm now exists on
+    /// disk). QueueLibraryScan() is whole-server, not scoped to just the configured Movies library - the same,
+    /// already-proven mechanism the P0 spike used (ValidateMediaLibrary's narrower per-folder scoping was
+    /// deliberately not researched for this slice). Fire-and-forget: does not wait for the scan to finish.
+    /// </summary>
+    [HttpPost("Libraries/Scan")]
+    public IActionResult ScanLibraries()
+    {
+        libraryManager.QueueLibraryScan();
+        return Accepted(new { queuedAtUtc = DateTime.UtcNow });
+    }
+
+    /// <summary>
+    /// UI-3a: locates the real Jellyfin Movie item for an IMDb id, once a Completed .strm has been scanned in -
+    /// the same GetItemList/HasAnyProviderId pattern the P0 spike already proved (see SpikeController.FindMovie),
+    /// narrowed to exactly what UI-3 needs: an item id, or a clear "not found"/"ambiguous" outcome. The regex is
+    /// the spike's own ("^tt\d{7,9}$"), reused rather than redefined, since that is the pattern this whole action
+    /// is itself based on.
+    /// </summary>
+    [HttpGet("Libraries/Movies/By-Imdb/{imdbId}")]
+    public IActionResult FindMovieByImdbId(string imdbId)
+    {
+        if (!IsValidImdbId(imdbId))
+        {
+            return BadRequest();
+        }
+
+        var query = new InternalItemsQuery
+        {
+            IncludeItemTypes = [BaseItemKind.Movie],
+            Recursive = true,
+            HasAnyProviderId = new Dictionary<string, string> { [JfMetadataProvider.Imdb.ToString()] = imdbId },
+            DtoOptions = new DtoOptions(false),
+        };
+
+        IReadOnlyList<BaseItem> items = libraryManager.GetItemList(query);
+
+        return items.Count switch
+        {
+            0 => NotFound(),
+            1 => Ok(new { itemId = items[0].Id }),
+            // GetItemList's result ordering with no explicit sort is not something this slice verified as stable -
+            // reporting the ambiguity is safer than guessing a "first" result and silently picking the wrong movie.
+            _ => StatusCode(StatusCodes.Status409Conflict, new { reason = "Multiple Jellyfin items matched this IMDb id." }),
+        };
+    }
+
+    private static readonly Regex ImdbIdPattern = new(@"^tt\d{7,9}$", RegexOptions.Compiled);
+
+    /// <summary>Public so it can be unit-tested directly - see FindMovieByImdbId's remarks on why GetItemList itself is not.</summary>
+    public static bool IsValidImdbId(string imdbId) => ImdbIdPattern.IsMatch(imdbId);
 }
 
 /// <summary>
