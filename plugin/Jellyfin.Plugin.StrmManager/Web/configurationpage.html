@@ -62,13 +62,13 @@ convention - no frontend framework.
 
                 libraries
                     .filter(function (library) {
-                        return library.collectionType === collectionType;
+                        return library.CollectionType === collectionType;
                     })
                     .forEach(function (library) {
                         var option = document.createElement("option");
-                        option.value = library.itemId;
-                        option.textContent = library.name;
-                        if (library.itemId === selectedId) {
+                        option.value = library.ItemId;
+                        option.textContent = library.Name;
+                        if (library.ItemId === selectedId) {
                             option.selected = true;
                         }
                         select.appendChild(option);
