@@ -214,14 +214,21 @@ loses the in-progress UI state and the user re-selects/re-clicks Assistir, which
             // watch/poll chain from a previously-selected movie can never overwrite or navigate for the current one.
             var selectionToken = 0;
 
+            // Authenticated transport for every UI-3 plugin call - raw fetch(ApiClient.getUrl(path)) does NOT carry
+            // Jellyfin's auth (proven the hard way: [Authorize(Policy = RequiresElevation)] rejects it with 401
+            // before the controller action runs, exactly as already documented for the P0 spike/P5 real smoke).
+            // ApiClient.ajax's promise resolves with the parsed body on success and REJECTS (with an object
+            // exposing .status) on any non-2xx - normalized here into a single, always-resolved {ok, ...} shape so
+            // call sites never need a second rejection handler and never see a fabricated 200/202.
             function fetchJson(method, path) {
-                return fetch(ApiClient.getUrl(path), { method: method }).then(function (response) {
-                    return response.json().catch(function () {
-                        return null;
-                    }).then(function (body) {
-                        return { status: response.status, body: body };
-                    });
-                });
+                return ApiClient.ajax({ type: method, url: ApiClient.getUrl(path), dataType: "json" }).then(
+                    function (body) {
+                        return { ok: true, body: body };
+                    },
+                    function (err) {
+                        return { ok: false, status: (err && err.status !== undefined) ? err.status : null, body: null };
+                    }
+                );
             }
 
             // Fills an EXISTING wrap element with a poster image (falling back to a text placeholder on missing URL
@@ -371,21 +378,14 @@ loses the in-progress UI state and the user re-selects/re-clicks Assistir, which
                         return;
                     }
 
-                    if (result.status === 202 && result.body && result.body.status) {
+                    if (result.ok && result.body && result.body.status) {
                         handleMovieStatus(movie, token, result.body.status);
                         return;
                     }
 
-                    if (result.status === 429) {
+                    if (!result.ok && result.status === 429) {
                         setStatus(token, BUSY_MESSAGE);
                         setWatchButtonEnabled(token, true);
-                        return;
-                    }
-
-                    setStatus(token, GENERIC_FAILURE_MESSAGE);
-                    setWatchButtonEnabled(token, true);
-                }, function () {
-                    if (token !== selectionToken) {
                         return;
                     }
 
@@ -427,15 +427,8 @@ loses the in-progress UI state and the user re-selects/re-clicks Assistir, which
                         return;
                     }
 
-                    if (result.status === 200 && result.body && result.body.status) {
+                    if (result.ok && result.body && result.body.status) {
                         handleMovieStatus(movie, token, result.body.status);
-                        return;
-                    }
-
-                    setStatus(token, GENERIC_FAILURE_MESSAGE);
-                    setWatchButtonEnabled(token, true);
-                }, function () {
-                    if (token !== selectionToken) {
                         return;
                     }
 
@@ -447,20 +440,19 @@ loses the in-progress UI state and the user re-selects/re-clicks Assistir, which
             // ---- Completed -> library scan + item handoff (UI-3b) ------------------------------------------------
 
             function beginLibraryHandoff(movie, token) {
-                fetchJson("POST", "StrmManager/Libraries/Scan").then(function () {
+                // Scan happens exactly once per Completed watch attempt - never retried, whether it succeeds or not.
+                fetchJson("POST", "StrmManager/Libraries/Scan").then(function (result) {
                     if (token !== selectionToken) {
                         return;
                     }
 
-                    pollForJellyfinItem(movie, token, Date.now());
-                }, function () {
-                    if (token !== selectionToken) {
+                    if (result.ok) {
+                        pollForJellyfinItem(movie, token, Date.now());
                         return;
                     }
 
-                    // The scan request itself was not accepted - still poll once for the item (it may already exist
-                    // from an earlier scan), but never retry the scan call itself.
-                    pollForJellyfinItem(movie, token, Date.now());
+                    setStatus(token, GENERIC_FAILURE_MESSAGE);
+                    setWatchButtonEnabled(token, true);
                 });
             }
 
@@ -474,24 +466,20 @@ loses the in-progress UI state and the user re-selects/re-clicks Assistir, which
                         return;
                     }
 
-                    if (result.status === 200 && result.body && result.body.itemId) {
+                    if (result.ok && result.body && result.body.itemId) {
                         Dashboard.navigate("details?id=" + result.body.itemId);
                         return;
                     }
 
-                    if (result.status === 400 || result.status === 409) {
-                        setStatus(token, GENERIC_FAILURE_MESSAGE);
-                        setWatchButtonEnabled(token, true);
+                    if (!result.ok && result.status === 404) {
+                        // Not discovered yet - keep polling within the bounded window.
+                        continueOrGiveUpLibraryPoll(movie, token, startedAt);
                         return;
                     }
 
-                    continueOrGiveUpLibraryPoll(movie, token, startedAt);
-                }, function () {
-                    if (token !== selectionToken) {
-                        return;
-                    }
-
-                    continueOrGiveUpLibraryPoll(movie, token, startedAt);
+                    // 400/409 (ambiguous/invalid) or anything else unexpected: terminal, same generic message.
+                    setStatus(token, GENERIC_FAILURE_MESSAGE);
+                    setWatchButtonEnabled(token, true);
                 });
             }
 
