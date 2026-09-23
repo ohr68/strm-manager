@@ -120,7 +120,112 @@ public sealed partial class StrmManagerClient(HttpClient httpClient, ILogger<Str
     [LoggerMessage(Level = LogLevel.Information, Message = "STRM Manager movie {MovieId} for {ImdbId} is {Status}")]
     private partial void LogFound(Guid movieId, string imdbId, string status);
 
-    /// <summary>Only the fields P1's MovieLookupResult.Found needs; every other MovieResponse field is ignored.</summary>
+    public async Task<AddMovieResult> AddMovieAsync(string imdbId, CancellationToken cancellationToken)
+    {
+        if (httpClient.BaseAddress is null)
+        {
+            LogAddNoBaseUrl(imdbId);
+            return new AddMovieResult.Error("STRM Manager BaseUrl is not configured.");
+        }
+
+        // The entire request body STRM Manager's POST /api/movies accepts or needs (see AddMovieCommand's own
+        // remark: title/year always come from its metadata provider, never from a caller).
+        using JsonContent content = JsonContent.Create(new { imdbId }, options: JsonOptions);
+
+        HttpResponseMessage response;
+        try
+        {
+            response = await httpClient.PostAsync(new Uri("api/movies", UriKind.Relative), content, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            // Same reasoning as GetByImdbIdAsync: HttpClient's own timeout also throws OperationCanceledException, so
+            // only a cause OTHER than the caller's token is handled here; a caller cancellation propagates unchanged.
+            LogAddTimedOut(imdbId);
+            return new AddMovieResult.Unreachable("Request timed out.");
+        }
+        catch (HttpRequestException exception)
+        {
+            LogAddUnreachable(exception, imdbId, exception.GetType().Name);
+            return new AddMovieResult.Unreachable(exception.GetType().Name);
+        }
+
+        using (response)
+        {
+            switch (response.StatusCode)
+            {
+                case HttpStatusCode.Created:
+                    return await ReadCreatedAsync(response, imdbId, cancellationToken).ConfigureAwait(false);
+                case HttpStatusCode.Conflict:
+                    LogAlreadyExists(imdbId);
+                    return new AddMovieResult.AlreadyExists();
+                case HttpStatusCode.BadRequest:
+                    LogAddInvalid(imdbId);
+                    return new AddMovieResult.Invalid();
+                case HttpStatusCode.NotFound:
+                    LogAddNotFound(imdbId);
+                    return new AddMovieResult.NotFound();
+                default:
+                    LogAddUnexpectedStatus((int)response.StatusCode, imdbId);
+                    return new AddMovieResult.Error($"Unexpected HTTP status {(int)response.StatusCode}.");
+            }
+        }
+    }
+
+    private async Task<AddMovieResult> ReadCreatedAsync(HttpResponseMessage response, string imdbId, CancellationToken cancellationToken)
+    {
+        CreatedResponseDto? dto;
+        try
+        {
+            dto = await response.Content.ReadFromJsonAsync<CreatedResponseDto>(JsonOptions, cancellationToken).ConfigureAwait(false);
+        }
+        catch (JsonException exception)
+        {
+            LogAddMalformedBody(exception, imdbId);
+            return new AddMovieResult.Error("Malformed response body.");
+        }
+
+        if (dto is null || dto.Id == Guid.Empty)
+        {
+            LogAddUnexpectedShape(imdbId);
+            return new AddMovieResult.Error("Unexpected response shape.");
+        }
+
+        LogCreated(dto.Id, imdbId);
+        return new AddMovieResult.Created(dto.Id);
+    }
+
+    [LoggerMessage(Level = LogLevel.Error, Message = "STRM Manager add for {ImdbId} skipped: no valid BaseUrl is configured")]
+    private partial void LogAddNoBaseUrl(string imdbId);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "STRM Manager add for {ImdbId} timed out")]
+    private partial void LogAddTimedOut(string imdbId);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "STRM Manager add for {ImdbId} failed to reach the server ({ExceptionType})")]
+    private partial void LogAddUnreachable(Exception exception, string imdbId, string exceptionType);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "STRM Manager movie {MovieId} created for {ImdbId}")]
+    private partial void LogCreated(Guid movieId, string imdbId);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "STRM Manager already has a movie for {ImdbId}")]
+    private partial void LogAlreadyExists(string imdbId);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "STRM Manager rejected adding {ImdbId} as invalid")]
+    private partial void LogAddInvalid(string imdbId);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "STRM Manager's metadata provider has no data for {ImdbId}")]
+    private partial void LogAddNotFound(string imdbId);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "STRM Manager returned unexpected status {StatusCode} adding {ImdbId}")]
+    private partial void LogAddUnexpectedStatus(int statusCode, string imdbId);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "STRM Manager returned a malformed 201 body for {ImdbId}")]
+    private partial void LogAddMalformedBody(Exception exception, string imdbId);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "STRM Manager returned an unexpected 201 body shape for {ImdbId}")]
+    private partial void LogAddUnexpectedShape(string imdbId);
+
+    /// <summary>Only the fields MovieLookupResult.Found needs; every other MovieResponse field is ignored.</summary>
     private sealed class MovieResponseDto
     {
         public Guid Id { get; init; }
@@ -132,5 +237,11 @@ public sealed partial class StrmManagerClient(HttpClient httpClient, ILogger<Str
         public int Year { get; init; }
 
         public string Status { get; init; } = string.Empty;
+    }
+
+    /// <summary>POST /api/movies's success body is just {"id": "..."} - nothing else to read.</summary>
+    private sealed class CreatedResponseDto
+    {
+        public Guid Id { get; init; }
     }
 }
