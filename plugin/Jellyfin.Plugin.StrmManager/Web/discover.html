@@ -1,9 +1,12 @@
 <!--
-UI-2: the plugin's first catalog page (see Plugin.cs.GetPages()) - a separate page from configurationpage.html, not
-a section grafted onto it, since browsing and configuration are different concerns. One horizontal "Popular Movies"
-row of poster cards, browse-only: cards are metadata (CatalogController/StrmManagerClient.GetPopularMoviesAsync),
-never trigger AddMovie/EnsureMovie/ProcessMovie/.strm/scan/playback. Plain HTML/CSS/JS, no frontend framework, CSS
-scoped under #StrmManagerDiscoverPage rather than reusing/copying Jellyfin Web's own stylesheet.
+UI-2/UI-3b: the plugin's catalog + watch page (see Plugin.cs.GetPages()) - a separate page from
+configurationpage.html, not a section grafted onto it, since browsing/configuring are different concerns. One
+horizontal "Popular Movies" row of poster cards (UI-2); clicking a card (UI-3b) reveals a detail/watch state that
+composes the UI-3a endpoints (Watch, the existing By-Imdb poll, Libraries/Scan, Libraries/Movies/By-Imdb) into a
+friendly Portuguese status flow ending in a native Jellyfin details-page handoff. Plain HTML/CSS/JS, no frontend
+framework, CSS scoped under #StrmManagerDiscoverPage rather than reusing/copying Jellyfin Web's own stylesheet. No
+plugin-side persistence anywhere here - the backend Movie row stays the sole source of truth; a page reload simply
+loses the in-progress UI state and the user re-selects/re-clicks Assistir, which is safe and idempotent server-side.
 -->
 <div id="StrmManagerDiscoverPage" data-role="page" class="page type-interior pluginConfigurationPage" data-require="emby-button">
     <div data-role="content">
@@ -16,6 +19,18 @@ scoped under #StrmManagerDiscoverPage rather than reusing/copying Jellyfin Web's
                 <h3 class="strm-row-title">Popular Movies</h3>
                 <div class="strm-row-scroller" id="PopularMoviesScroller">
                     <div class="strm-row-message">Loading&hellip;</div>
+                </div>
+            </div>
+
+            <div class="strm-detail" id="MovieDetail" hidden>
+                <div class="strm-detail-poster-wrap" id="MovieDetailPosterWrap"></div>
+                <div class="strm-detail-info">
+                    <h3 class="strm-detail-title" id="MovieDetailTitle"></h3>
+                    <div class="strm-detail-year" id="MovieDetailYear"></div>
+                    <button is="emby-button" type="button" class="raised block emby-button strm-watch-button" id="WatchButton">
+                        <span>Assistir</span>
+                    </button>
+                    <div class="strm-detail-status" id="MovieDetailStatus" role="status" aria-live="polite"></div>
                 </div>
             </div>
         </div>
@@ -50,9 +65,17 @@ scoped under #StrmManagerDiscoverPage rather than reusing/copying Jellyfin Web's
         #StrmManagerDiscoverPage .strm-card {
             flex: 0 0 auto;
             width: 140px;
+            cursor: pointer;
         }
 
-        #StrmManagerDiscoverPage .strm-card-poster-wrap {
+        #StrmManagerDiscoverPage .strm-card:focus-visible {
+            outline: 2px solid #00a4dc;
+            outline-offset: 2px;
+            border-radius: 6px;
+        }
+
+        #StrmManagerDiscoverPage .strm-card-poster-wrap,
+        #StrmManagerDiscoverPage .strm-detail-poster-wrap {
             width: 140px;
             height: 210px;
             border-radius: 6px;
@@ -68,14 +91,16 @@ scoped under #StrmManagerDiscoverPage rather than reusing/copying Jellyfin Web's
             box-shadow: 0 4px 10px rgba(0, 0, 0, 0.7);
         }
 
-        #StrmManagerDiscoverPage .strm-card-poster {
+        #StrmManagerDiscoverPage .strm-card-poster,
+        #StrmManagerDiscoverPage .strm-detail-poster {
             width: 100%;
             height: 100%;
             object-fit: cover;
             display: block;
         }
 
-        #StrmManagerDiscoverPage .strm-card-poster-fallback {
+        #StrmManagerDiscoverPage .strm-card-poster-fallback,
+        #StrmManagerDiscoverPage .strm-detail-poster-fallback {
             width: 100%;
             height: 100%;
             display: flex;
@@ -109,10 +134,124 @@ scoped under #StrmManagerDiscoverPage rather than reusing/copying Jellyfin Web's
                 height: 165px;
             }
         }
+
+        #StrmManagerDiscoverPage .strm-detail {
+            display: flex;
+            gap: 1.5em;
+            margin: 1.5em 0;
+            padding: 1em;
+            background: rgba(255, 255, 255, 0.04);
+            border-radius: 8px;
+        }
+
+        #StrmManagerDiscoverPage .strm-detail-poster-wrap {
+            flex: 0 0 auto;
+            width: 160px;
+            height: 240px;
+        }
+
+        #StrmManagerDiscoverPage .strm-detail-info {
+            display: flex;
+            flex-direction: column;
+            gap: 0.4em;
+            min-width: 0;
+        }
+
+        #StrmManagerDiscoverPage .strm-detail-title {
+            margin: 0;
+            color: #fff;
+            font-size: 1.3em;
+        }
+
+        #StrmManagerDiscoverPage .strm-detail-year {
+            color: #999;
+            font-size: 0.9em;
+        }
+
+        #StrmManagerDiscoverPage .strm-watch-button {
+            width: auto;
+            margin: 0.4em 0;
+        }
+
+        #StrmManagerDiscoverPage .strm-detail-status {
+            color: #ccc;
+            font-size: 0.9em;
+            min-height: 1.2em;
+        }
+
+        @media (max-width: 600px) {
+            #StrmManagerDiscoverPage .strm-detail {
+                flex-direction: column;
+            }
+
+            #StrmManagerDiscoverPage .strm-detail-poster-wrap {
+                width: 140px;
+                height: 210px;
+            }
+        }
     </style>
 
     <script type="text/javascript">
         (function () {
+            var FRIENDLY_STATUS = {
+                Scheduled: "Aguardando disponibilidade",
+                Pending: "Preparando...",
+                Searching: "Pesquisando arquivo...",
+                Validating: "Validando mídia...",
+                Completed: "Pronto para assistir",
+                Unavailable: "Não encontramos este título",
+                Error: "Não foi possível preparar o conteúdo"
+            };
+            var GENERIC_FAILURE_MESSAGE = "Não foi possível preparar o conteúdo agora.";
+            var BUSY_MESSAGE = "O servidor está ocupado. Tente novamente em instantes.";
+            var NOT_YET_IN_LIBRARY_MESSAGE = "O conteúdo foi preparado, mas ainda não apareceu na biblioteca. Tente novamente em instantes.";
+            var PROCESSING_STATUSES = { Pending: true, Searching: true, Validating: true };
+            var STATUS_POLL_INTERVAL_MS = 1500;
+            var LIBRARY_POLL_INTERVAL_MS = 1500;
+            var LIBRARY_POLL_WINDOW_MS = 30000;
+
+            // Bumped on every new selection - every async step below checks it before touching the DOM, so a stale
+            // watch/poll chain from a previously-selected movie can never overwrite or navigate for the current one.
+            var selectionToken = 0;
+
+            function fetchJson(method, path) {
+                return fetch(ApiClient.getUrl(path), { method: method }).then(function (response) {
+                    return response.json().catch(function () {
+                        return null;
+                    }).then(function (body) {
+                        return { status: response.status, body: body };
+                    });
+                });
+            }
+
+            // Fills an EXISTING wrap element with a poster image (falling back to a text placeholder on missing URL
+            // or load failure) - shared by the row cards (which create their own wrap) and the detail panel (which
+            // reuses its one fixed #MovieDetailPosterWrap element), so there is exactly one poster/fallback
+            // implementation, not two.
+            function fillPoster(wrap, movie, posterClass, fallbackClass) {
+                wrap.innerHTML = "";
+
+                function showFallback() {
+                    wrap.innerHTML = "";
+                    var fallback = document.createElement("div");
+                    fallback.className = fallbackClass;
+                    fallback.textContent = movie.title || "No image";
+                    wrap.appendChild(fallback);
+                }
+
+                if (movie.posterUrl) {
+                    var img = document.createElement("img");
+                    img.className = posterClass;
+                    img.loading = "lazy";
+                    img.alt = movie.title || "";
+                    img.src = movie.posterUrl;
+                    img.addEventListener("error", showFallback);
+                    wrap.appendChild(img);
+                } else {
+                    showFallback();
+                }
+            }
+
             function renderMovies(container, movies) {
                 container.innerHTML = "";
 
@@ -120,36 +259,18 @@ scoped under #StrmManagerDiscoverPage rather than reusing/copying Jellyfin Web's
                     var card = document.createElement("div");
                     card.className = "strm-card";
                     card.tabIndex = 0;
+                    card.setAttribute("role", "button");
+                    card.setAttribute("aria-label", movie.title || "");
 
                     var posterWrap = document.createElement("div");
                     posterWrap.className = "strm-card-poster-wrap";
-
-                    function showFallback() {
-                        posterWrap.innerHTML = "";
-                        var fallback = document.createElement("div");
-                        fallback.className = "strm-card-poster-fallback";
-                        fallback.textContent = movie.title || "No image";
-                        posterWrap.appendChild(fallback);
-                    }
-
-                    if (movie.posterUrl) {
-                        var img = document.createElement("img");
-                        img.className = "strm-card-poster";
-                        img.loading = "lazy";
-                        img.alt = movie.title || "";
-                        img.src = movie.posterUrl;
-                        img.addEventListener("error", showFallback);
-                        posterWrap.appendChild(img);
-                    } else {
-                        showFallback();
-                    }
+                    fillPoster(posterWrap, movie, "strm-card-poster", "strm-card-poster-fallback");
+                    card.appendChild(posterWrap);
 
                     var title = document.createElement("div");
                     title.className = "strm-card-title";
                     title.textContent = movie.title || "";
                     title.title = movie.title || "";
-
-                    card.appendChild(posterWrap);
                     card.appendChild(title);
 
                     if (movie.year) {
@@ -158,6 +279,16 @@ scoped under #StrmManagerDiscoverPage rather than reusing/copying Jellyfin Web's
                         year.textContent = movie.year;
                         card.appendChild(year);
                     }
+
+                    card.addEventListener("click", function () {
+                        selectMovie(movie);
+                    });
+                    card.addEventListener("keydown", function (event) {
+                        if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            selectMovie(movie);
+                        }
+                    });
 
                     container.appendChild(card);
                 });
@@ -187,6 +318,193 @@ scoped under #StrmManagerDiscoverPage rather than reusing/copying Jellyfin Web's
                 }, function () {
                     showMessage(scroller, "STRM Manager is unavailable right now. Check the STRM Manager configuration page.");
                 });
+            }
+
+            // ---- Selection / detail state (UI-3b) --------------------------------------------------------------
+
+            function selectMovie(movie) {
+                selectionToken += 1;
+                var token = selectionToken;
+
+                var detail = document.querySelector("#MovieDetail");
+                detail.hidden = false;
+
+                fillPoster(document.querySelector("#MovieDetailPosterWrap"), movie, "strm-detail-poster", "strm-detail-poster-fallback");
+
+                document.querySelector("#MovieDetailTitle").textContent = movie.title || "";
+                document.querySelector("#MovieDetailYear").textContent = movie.year || "";
+                setStatus(token, "");
+
+                var watchButton = document.querySelector("#WatchButton");
+                watchButton.disabled = false;
+                watchButton.onclick = function () {
+                    startWatch(movie, token);
+                };
+
+                detail.scrollIntoView({ behavior: "smooth", block: "nearest" });
+            }
+
+            function setStatus(token, text) {
+                if (token !== selectionToken) {
+                    return;
+                }
+
+                document.querySelector("#MovieDetailStatus").textContent = text;
+            }
+
+            function setWatchButtonEnabled(token, enabled) {
+                if (token !== selectionToken) {
+                    return;
+                }
+
+                document.querySelector("#WatchButton").disabled = !enabled;
+            }
+
+            // ---- Watch flow (UI-3b) -----------------------------------------------------------------------------
+
+            function startWatch(movie, token) {
+                setWatchButtonEnabled(token, false);
+                setStatus(token, FRIENDLY_STATUS.Pending);
+
+                fetchJson("POST", "StrmManager/Movies/Watch/" + encodeURIComponent(movie.externalId)).then(function (result) {
+                    if (token !== selectionToken) {
+                        return;
+                    }
+
+                    if (result.status === 202 && result.body && result.body.status) {
+                        handleMovieStatus(movie, token, result.body.status);
+                        return;
+                    }
+
+                    if (result.status === 429) {
+                        setStatus(token, BUSY_MESSAGE);
+                        setWatchButtonEnabled(token, true);
+                        return;
+                    }
+
+                    setStatus(token, GENERIC_FAILURE_MESSAGE);
+                    setWatchButtonEnabled(token, true);
+                }, function () {
+                    if (token !== selectionToken) {
+                        return;
+                    }
+
+                    setStatus(token, GENERIC_FAILURE_MESSAGE);
+                    setWatchButtonEnabled(token, true);
+                });
+            }
+
+            function handleMovieStatus(movie, token, status) {
+                if (token !== selectionToken) {
+                    return;
+                }
+
+                setStatus(token, FRIENDLY_STATUS[status] || GENERIC_FAILURE_MESSAGE);
+
+                if (status === "Completed") {
+                    beginLibraryHandoff(movie, token);
+                    return;
+                }
+
+                if (PROCESSING_STATUSES[status]) {
+                    window.setTimeout(function () {
+                        pollMovieStatus(movie, token);
+                    }, STATUS_POLL_INTERVAL_MS);
+                    return;
+                }
+
+                // Scheduled, Unavailable, Error, or anything unrecognized: terminal for this attempt - no retry.
+                setWatchButtonEnabled(token, true);
+            }
+
+            function pollMovieStatus(movie, token) {
+                if (token !== selectionToken) {
+                    return;
+                }
+
+                fetchJson("GET", "StrmManager/Movies/By-Imdb/" + encodeURIComponent(movie.externalId)).then(function (result) {
+                    if (token !== selectionToken) {
+                        return;
+                    }
+
+                    if (result.status === 200 && result.body && result.body.status) {
+                        handleMovieStatus(movie, token, result.body.status);
+                        return;
+                    }
+
+                    setStatus(token, GENERIC_FAILURE_MESSAGE);
+                    setWatchButtonEnabled(token, true);
+                }, function () {
+                    if (token !== selectionToken) {
+                        return;
+                    }
+
+                    setStatus(token, GENERIC_FAILURE_MESSAGE);
+                    setWatchButtonEnabled(token, true);
+                });
+            }
+
+            // ---- Completed -> library scan + item handoff (UI-3b) ------------------------------------------------
+
+            function beginLibraryHandoff(movie, token) {
+                fetchJson("POST", "StrmManager/Libraries/Scan").then(function () {
+                    if (token !== selectionToken) {
+                        return;
+                    }
+
+                    pollForJellyfinItem(movie, token, Date.now());
+                }, function () {
+                    if (token !== selectionToken) {
+                        return;
+                    }
+
+                    // The scan request itself was not accepted - still poll once for the item (it may already exist
+                    // from an earlier scan), but never retry the scan call itself.
+                    pollForJellyfinItem(movie, token, Date.now());
+                });
+            }
+
+            function pollForJellyfinItem(movie, token, startedAt) {
+                if (token !== selectionToken) {
+                    return;
+                }
+
+                fetchJson("GET", "StrmManager/Libraries/Movies/By-Imdb/" + encodeURIComponent(movie.externalId)).then(function (result) {
+                    if (token !== selectionToken) {
+                        return;
+                    }
+
+                    if (result.status === 200 && result.body && result.body.itemId) {
+                        Dashboard.navigate("details?id=" + result.body.itemId);
+                        return;
+                    }
+
+                    if (result.status === 400 || result.status === 409) {
+                        setStatus(token, GENERIC_FAILURE_MESSAGE);
+                        setWatchButtonEnabled(token, true);
+                        return;
+                    }
+
+                    continueOrGiveUpLibraryPoll(movie, token, startedAt);
+                }, function () {
+                    if (token !== selectionToken) {
+                        return;
+                    }
+
+                    continueOrGiveUpLibraryPoll(movie, token, startedAt);
+                });
+            }
+
+            function continueOrGiveUpLibraryPoll(movie, token, startedAt) {
+                if (Date.now() - startedAt >= LIBRARY_POLL_WINDOW_MS) {
+                    setStatus(token, NOT_YET_IN_LIBRARY_MESSAGE);
+                    setWatchButtonEnabled(token, true);
+                    return;
+                }
+
+                window.setTimeout(function () {
+                    pollForJellyfinItem(movie, token, startedAt);
+                }, LIBRARY_POLL_INTERVAL_MS);
             }
 
             document.querySelector("#StrmManagerDiscoverPage").addEventListener("pageshow", function () {
