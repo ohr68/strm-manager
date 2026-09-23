@@ -434,4 +434,108 @@ public sealed partial class StrmManagerClient(HttpClient httpClient, IHttpClient
     {
         public string? Title { get; init; }
     }
+
+    public async Task<CatalogMoviesResult> GetPopularMoviesAsync(CancellationToken cancellationToken)
+    {
+        if (httpClient.BaseAddress is null)
+        {
+            LogCatalogNoBaseUrl();
+            return new CatalogMoviesResult.Error("STRM Manager BaseUrl is not configured.");
+        }
+
+        HttpResponseMessage response;
+        try
+        {
+            response = await httpClient.GetAsync(new Uri("api/catalog/movies/popular", UriKind.Relative), cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            LogCatalogTimedOut();
+            return new CatalogMoviesResult.Unreachable("Request timed out.");
+        }
+        catch (HttpRequestException exception)
+        {
+            LogCatalogUnreachable(exception, exception.GetType().Name);
+            return new CatalogMoviesResult.Unreachable(exception.GetType().Name);
+        }
+
+        using (response)
+        {
+            if (response.StatusCode != HttpStatusCode.OK)
+            {
+                LogCatalogUnexpectedStatus((int)response.StatusCode);
+                return new CatalogMoviesResult.Error($"Unexpected HTTP status {(int)response.StatusCode}.");
+            }
+
+            return await ReadCatalogAsync(response, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private async Task<CatalogMoviesResult> ReadCatalogAsync(HttpResponseMessage response, CancellationToken cancellationToken)
+    {
+        PopularMoviesResponseDto? dto;
+        try
+        {
+            dto = await response.Content.ReadFromJsonAsync<PopularMoviesResponseDto>(JsonOptions, cancellationToken).ConfigureAwait(false);
+        }
+        catch (JsonException exception)
+        {
+            LogCatalogMalformedBody(exception);
+            return new CatalogMoviesResult.Error("Malformed response body.");
+        }
+
+        if (dto?.Movies is null)
+        {
+            LogCatalogUnexpectedShape();
+            return new CatalogMoviesResult.Error("Unexpected response shape.");
+        }
+
+        // Skip entries missing what a catalog card needs rather than failing the whole row - mirrors
+        // CinemetaCatalogMapper's own skip-not-fail rule on the backend.
+        List<CatalogMovie> movies = dto.Movies
+            .Where(item => !string.IsNullOrWhiteSpace(item.ExternalId) && !string.IsNullOrWhiteSpace(item.Title))
+            .Select(item => new CatalogMovie(item.ExternalId!, item.Title!, item.Year, item.PosterUrl))
+            .ToList();
+
+        LogCatalogRetrieved(movies.Count);
+        return new CatalogMoviesResult.Found(movies);
+    }
+
+    [LoggerMessage(Level = LogLevel.Error, Message = "STRM Manager popular movies catalog request skipped: no valid BaseUrl is configured")]
+    private partial void LogCatalogNoBaseUrl();
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "STRM Manager popular movies catalog request timed out")]
+    private partial void LogCatalogTimedOut();
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "STRM Manager popular movies catalog request failed to reach the server ({ExceptionType})")]
+    private partial void LogCatalogUnreachable(Exception exception, string exceptionType);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "STRM Manager returned unexpected status {StatusCode} for the popular movies catalog")]
+    private partial void LogCatalogUnexpectedStatus(int statusCode);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "STRM Manager returned a malformed popular movies catalog body")]
+    private partial void LogCatalogMalformedBody(Exception exception);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "STRM Manager returned an unexpected popular movies catalog body shape")]
+    private partial void LogCatalogUnexpectedShape();
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "STRM Manager returned {MovieCount} popular movies")]
+    private partial void LogCatalogRetrieved(int movieCount);
+
+    /// <summary>Only the fields CatalogMovie needs; matches the backend's own CatalogMovieResponse.</summary>
+    private sealed class PopularMoviesResponseDto
+    {
+        public List<CatalogMovieDto>? Movies { get; set; }
+    }
+
+    private sealed class CatalogMovieDto
+    {
+        public string? ExternalId { get; set; }
+
+        public string? Title { get; set; }
+
+        public int? Year { get; set; }
+
+        public string? PosterUrl { get; set; }
+    }
 }

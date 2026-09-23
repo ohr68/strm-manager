@@ -43,5 +43,17 @@ public sealed class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
             MenuSection = "server",
             MenuIcon = "video_library",
         };
+
+        // UI-2: a separate page from configuration - browsing and configuring are different concerns (see
+        // Web/discover.html).
+        yield return new PluginPageInfo
+        {
+            Name = "StrmManagerDiscover",
+            DisplayName = "STRM Manager Discover",
+            EmbeddedResourcePath = $"{GetType().Namespace}.Web.discover.html",
+            EnableInMainMenu = true,
+            MenuSection = "server",
+            MenuIcon = "movie",
+        };
     }
 }

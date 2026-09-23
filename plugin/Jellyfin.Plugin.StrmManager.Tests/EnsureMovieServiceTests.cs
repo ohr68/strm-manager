@@ -143,5 +143,8 @@ public sealed class EnsureMovieServiceTests
         // implements IStrmManagerClient to satisfy the interface.
         public Task<ProcessMovieResult> ProcessMovieAsync(Guid movieId, CancellationToken cancellationToken) =>
             throw new NotSupportedException("EnsureMovieService does not call ProcessMovieAsync.");
+
+        public Task<CatalogMoviesResult> GetPopularMoviesAsync(CancellationToken cancellationToken) =>
+            throw new NotSupportedException("EnsureMovieService does not call GetPopularMoviesAsync.");
     }
 }

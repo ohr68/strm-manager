@@ -121,6 +121,9 @@ public sealed class ProcessMovieWorkerTests
 
         public Task<ProcessMovieResult> ProcessMovieAsync(Guid movieId, CancellationToken cancellationToken) =>
             handle(movieId, cancellationToken);
+
+        public Task<CatalogMoviesResult> GetPopularMoviesAsync(CancellationToken cancellationToken) =>
+            throw new NotSupportedException("ProcessMovieWorker does not call GetPopularMoviesAsync.");
     }
 
     private sealed class FakeServiceScopeFactory(IStrmManagerClient client) : IServiceScopeFactory

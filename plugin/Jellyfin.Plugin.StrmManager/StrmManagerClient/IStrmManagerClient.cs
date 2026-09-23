@@ -33,4 +33,12 @@ public interface IStrmManagerClient
     /// scheduled/background code in this slice - see ProcessMovieResult's own remarks.
     /// </summary>
     Task<ProcessMovieResult> ProcessMovieAsync(Guid movieId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Calls GET {BaseUrl}/api/catalog/movies/popular - UI-2's "Popular Movies" row. Never throws for an expected
+    /// outcome - those are all represented in the returned <see cref="CatalogMoviesResult"/>. A cancellation
+    /// requested by <paramref name="cancellationToken"/> propagates as a normal
+    /// <see cref="OperationCanceledException"/>, not as a result value.
+    /// </summary>
+    Task<CatalogMoviesResult> GetPopularMoviesAsync(CancellationToken cancellationToken);
 }

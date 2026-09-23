@@ -101,6 +101,9 @@ public sealed class MoviesControllerTests
 
         public Task<ProcessMovieResult> ProcessMovieAsync(Guid movieId, CancellationToken cancellationToken) =>
             throw new NotSupportedException("The controller action must not call ProcessMovieAsync directly.");
+
+        public Task<CatalogMoviesResult> GetPopularMoviesAsync(CancellationToken cancellationToken) =>
+            throw new NotSupportedException("ProcessMovie must not call GetPopularMoviesAsync.");
     }
 
     private sealed class UnusedEnsureMovieService : IEnsureMovieService

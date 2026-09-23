@@ -1,0 +1,197 @@
+<!--
+UI-2: the plugin's first catalog page (see Plugin.cs.GetPages()) - a separate page from configurationpage.html, not
+a section grafted onto it, since browsing and configuration are different concerns. One horizontal "Popular Movies"
+row of poster cards, browse-only: cards are metadata (CatalogController/StrmManagerClient.GetPopularMoviesAsync),
+never trigger AddMovie/EnsureMovie/ProcessMovie/.strm/scan/playback. Plain HTML/CSS/JS, no frontend framework, CSS
+scoped under #StrmManagerDiscoverPage rather than reusing/copying Jellyfin Web's own stylesheet.
+-->
+<div id="StrmManagerDiscoverPage" data-role="page" class="page type-interior pluginConfigurationPage" data-require="emby-button">
+    <div data-role="content">
+        <div class="content-primary">
+            <div class="verticalSection">
+                <h2>STRM Manager / Discover</h2>
+            </div>
+
+            <div class="strm-row">
+                <h3 class="strm-row-title">Popular Movies</h3>
+                <div class="strm-row-scroller" id="PopularMoviesScroller">
+                    <div class="strm-row-message">Loading&hellip;</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <style>
+        #StrmManagerDiscoverPage .strm-row {
+            margin: 1.5em 0;
+        }
+
+        #StrmManagerDiscoverPage .strm-row-title {
+            font-size: 1.2em;
+            font-weight: 600;
+            margin: 0 0 0.6em;
+            color: #fff;
+        }
+
+        #StrmManagerDiscoverPage .strm-row-scroller {
+            display: flex;
+            gap: 1em;
+            overflow-x: auto;
+            overflow-y: hidden;
+            padding: 0.2em 0.2em 0.6em;
+            scrollbar-width: thin;
+        }
+
+        #StrmManagerDiscoverPage .strm-row-message {
+            color: #aaa;
+            padding: 1em 0;
+        }
+
+        #StrmManagerDiscoverPage .strm-card {
+            flex: 0 0 auto;
+            width: 140px;
+        }
+
+        #StrmManagerDiscoverPage .strm-card-poster-wrap {
+            width: 140px;
+            height: 210px;
+            border-radius: 6px;
+            overflow: hidden;
+            background: #202020;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+            transition: transform 0.15s ease, box-shadow 0.15s ease;
+        }
+
+        #StrmManagerDiscoverPage .strm-card:hover .strm-card-poster-wrap,
+        #StrmManagerDiscoverPage .strm-card:focus-within .strm-card-poster-wrap {
+            transform: scale(1.04);
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.7);
+        }
+
+        #StrmManagerDiscoverPage .strm-card-poster {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: block;
+        }
+
+        #StrmManagerDiscoverPage .strm-card-poster-fallback {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #777;
+            font-size: 0.85em;
+            text-align: center;
+            padding: 0.5em;
+            box-sizing: border-box;
+        }
+
+        #StrmManagerDiscoverPage .strm-card-title {
+            margin-top: 0.4em;
+            font-size: 0.85em;
+            color: #eee;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        #StrmManagerDiscoverPage .strm-card-year {
+            font-size: 0.78em;
+            color: #999;
+        }
+
+        @media (max-width: 600px) {
+            #StrmManagerDiscoverPage .strm-card,
+            #StrmManagerDiscoverPage .strm-card-poster-wrap {
+                width: 110px;
+                height: 165px;
+            }
+        }
+    </style>
+
+    <script type="text/javascript">
+        (function () {
+            function renderMovies(container, movies) {
+                container.innerHTML = "";
+
+                movies.forEach(function (movie) {
+                    var card = document.createElement("div");
+                    card.className = "strm-card";
+                    card.tabIndex = 0;
+
+                    var posterWrap = document.createElement("div");
+                    posterWrap.className = "strm-card-poster-wrap";
+
+                    function showFallback() {
+                        posterWrap.innerHTML = "";
+                        var fallback = document.createElement("div");
+                        fallback.className = "strm-card-poster-fallback";
+                        fallback.textContent = movie.title || "No image";
+                        posterWrap.appendChild(fallback);
+                    }
+
+                    if (movie.posterUrl) {
+                        var img = document.createElement("img");
+                        img.className = "strm-card-poster";
+                        img.loading = "lazy";
+                        img.alt = movie.title || "";
+                        img.src = movie.posterUrl;
+                        img.addEventListener("error", showFallback);
+                        posterWrap.appendChild(img);
+                    } else {
+                        showFallback();
+                    }
+
+                    var title = document.createElement("div");
+                    title.className = "strm-card-title";
+                    title.textContent = movie.title || "";
+                    title.title = movie.title || "";
+
+                    card.appendChild(posterWrap);
+                    card.appendChild(title);
+
+                    if (movie.year) {
+                        var year = document.createElement("div");
+                        year.className = "strm-card-year";
+                        year.textContent = movie.year;
+                        card.appendChild(year);
+                    }
+
+                    container.appendChild(card);
+                });
+            }
+
+            function showMessage(container, text) {
+                container.innerHTML = "";
+                var message = document.createElement("div");
+                message.className = "strm-row-message";
+                message.textContent = text;
+                container.appendChild(message);
+            }
+
+            function loadPopularMovies() {
+                var scroller = document.querySelector("#PopularMoviesScroller");
+                showMessage(scroller, "Loading…");
+
+                ApiClient.getJSON(ApiClient.getUrl("StrmManager/Catalog/Movies/Popular")).then(function (data) {
+                    var movies = (data && data.movies) || [];
+
+                    if (movies.length === 0) {
+                        showMessage(scroller, "No movies to show yet.");
+                        return;
+                    }
+
+                    renderMovies(scroller, movies);
+                }, function () {
+                    showMessage(scroller, "STRM Manager is unavailable right now. Check the STRM Manager configuration page.");
+                });
+            }
+
+            document.querySelector("#StrmManagerDiscoverPage").addEventListener("pageshow", function () {
+                loadPopularMovies();
+            });
+        })();
+    </script>
+</div>

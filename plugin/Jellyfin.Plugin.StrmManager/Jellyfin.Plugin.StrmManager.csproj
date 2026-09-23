@@ -35,6 +35,7 @@
 
   <ItemGroup>
     <EmbeddedResource Include="Web\configurationpage.html" />
+    <EmbeddedResource Include="Web\discover.html" />
   </ItemGroup>
 
 </Project>
