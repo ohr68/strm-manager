@@ -1,0 +1,124 @@
+<!--
+UI-1: the plugin's admin configuration page (see Plugin.cs.GetPages()). Backend URL + Movies/Series library
+selection only - no catalog/watch UI yet. Plain HTML/JS using Jellyfin's own dashboard web components
+(emby-input/emby-select/emby-button) and ApiClient/Dashboard globals, matching normal Jellyfin plugin page
+convention - no frontend framework.
+-->
+<div id="StrmManagerConfigPage" data-role="page" class="page type-interior pluginConfigurationPage" data-require="emby-input,emby-button,emby-select">
+    <div data-role="content">
+        <div class="content-primary">
+            <form id="StrmManagerConfigForm">
+                <div class="verticalSection">
+                    <h2>STRM Manager</h2>
+                    <p>Configure the STRM Manager backend connection and the Jellyfin libraries it manages.</p>
+                </div>
+
+                <div class="inputContainer">
+                    <input is="emby-input" type="text" id="BaseUrl" label="STRM Manager URL" placeholder="http://strm-manager:8080" />
+                    <div class="fieldDescription">The base URL of the STRM Manager backend, e.g. http://strm-manager-vnext-e2e:8080</div>
+                </div>
+
+                <div class="selectContainer">
+                    <select is="emby-select" id="MoviesLibraryId" label="Movies Library"></select>
+                    <div class="fieldDescription">The Jellyfin library STRM Manager writes movie .strm files into.</div>
+                </div>
+
+                <div class="selectContainer">
+                    <select is="emby-select" id="SeriesLibraryId" label="Series Library"></select>
+                    <div class="fieldDescription">The Jellyfin library STRM Manager writes series .strm files into.</div>
+                </div>
+
+                <div>
+                    <button is="emby-button" type="submit" class="raised button-submit block emby-button">
+                        <span>Save</span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+    <script type="text/javascript">
+        (function () {
+            var PluginId = "2f2a7c3f-6b3e-4c1a-9f0a-2b6a5f6d9c2a";
+
+            function isValidBaseUrl(value) {
+                if (!value) {
+                    return false;
+                }
+                try {
+                    var parsed = new URL(value);
+                    return parsed.protocol === "http:" || parsed.protocol === "https:";
+                } catch (e) {
+                    return false;
+                }
+            }
+
+            function populateLibrarySelect(select, libraries, collectionType, selectedId) {
+                select.innerHTML = "";
+
+                var placeholder = document.createElement("option");
+                placeholder.value = "";
+                placeholder.textContent = "(none)";
+                select.appendChild(placeholder);
+
+                libraries
+                    .filter(function (library) {
+                        return library.collectionType === collectionType;
+                    })
+                    .forEach(function (library) {
+                        var option = document.createElement("option");
+                        option.value = library.itemId;
+                        option.textContent = library.name;
+                        if (library.itemId === selectedId) {
+                            option.selected = true;
+                        }
+                        select.appendChild(option);
+                    });
+            }
+
+            document.querySelector("#StrmManagerConfigPage").addEventListener("pageshow", function () {
+                var page = this;
+
+                Dashboard.showLoadingMsg();
+
+                ApiClient.getPluginConfiguration(PluginId).then(function (config) {
+                    page.querySelector("#BaseUrl").value = config.BaseUrl || "";
+
+                    ApiClient.getJSON(ApiClient.getUrl("StrmManager/Libraries")).then(function (libraries) {
+                        populateLibrarySelect(page.querySelector("#MoviesLibraryId"), libraries, "movies", config.MoviesLibraryId);
+                        populateLibrarySelect(page.querySelector("#SeriesLibraryId"), libraries, "tvshows", config.SeriesLibraryId);
+                        Dashboard.hideLoadingMsg();
+                    }, function () {
+                        Dashboard.hideLoadingMsg();
+                        Dashboard.alert("Could not load Jellyfin libraries.");
+                    });
+                });
+            });
+
+            document.querySelector("#StrmManagerConfigForm").addEventListener("submit", function (e) {
+                e.preventDefault();
+
+                var page = document.querySelector("#StrmManagerConfigPage");
+                var baseUrl = page.querySelector("#BaseUrl").value.trim();
+
+                if (!isValidBaseUrl(baseUrl)) {
+                    Dashboard.alert("Enter a valid http:// or https:// STRM Manager URL.");
+                    return false;
+                }
+
+                Dashboard.showLoadingMsg();
+
+                ApiClient.getPluginConfiguration(PluginId).then(function (config) {
+                    config.BaseUrl = baseUrl;
+                    config.MoviesLibraryId = page.querySelector("#MoviesLibraryId").value || null;
+                    config.SeriesLibraryId = page.querySelector("#SeriesLibraryId").value || null;
+
+                    ApiClient.updatePluginConfiguration(PluginId, config).then(function (result) {
+                        Dashboard.processPluginConfigurationUpdateResult(result);
+                    });
+                });
+
+                return false;
+            });
+        })();
+    </script>
+</div>

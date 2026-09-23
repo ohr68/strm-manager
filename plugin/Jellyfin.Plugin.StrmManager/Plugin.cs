@@ -1,15 +1,16 @@
 using Jellyfin.Plugin.StrmManager.Configuration;
 using MediaBrowser.Common.Configuration;
 using MediaBrowser.Common.Plugins;
+using MediaBrowser.Model.Plugins;
 using MediaBrowser.Model.Serialization;
 
 namespace Jellyfin.Plugin.StrmManager;
 
 /// <summary>
-/// STRM Manager Jellyfin plugin. P1: the plugin exists and can look a movie up in STRM Manager by IMDb id
-/// (see StrmManagerClient/, Api/MoviesController). No add/process/scan/background work yet - see the P1 report.
+/// STRM Manager Jellyfin plugin. UI-1 adds the plugin's admin configuration page (backend URL, Movies/Series
+/// library selection) - see Web/configurationpage.html and Api/LibrariesController. No catalog/watch UI yet.
 /// </summary>
-public sealed class Plugin : BasePlugin<PluginConfiguration>
+public sealed class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
 {
     public Plugin(IApplicationPaths applicationPaths, IXmlSerializer xmlSerializer)
         : base(applicationPaths, xmlSerializer)
@@ -30,4 +31,17 @@ public sealed class Plugin : BasePlugin<PluginConfiguration>
     public override Guid Id => Guid.Parse("2f2a7c3f-6b3e-4c1a-9f0a-2b6a5f6d9c2a");
 
     public override string Description => "Looks up and (in later slices) provisions movies in STRM Manager from Jellyfin.";
+
+    public IEnumerable<PluginPageInfo> GetPages()
+    {
+        yield return new PluginPageInfo
+        {
+            Name = "STRM Manager",
+            DisplayName = "STRM Manager",
+            EmbeddedResourcePath = $"{GetType().Namespace}.Web.configurationpage.html",
+            EnableInMainMenu = true,
+            MenuSection = "server",
+            MenuIcon = "video_library",
+        };
+    }
 }

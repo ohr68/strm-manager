@@ -8,6 +8,8 @@
     <IsTestProject>true</IsTestProject>
     <!-- CA1707: underscores in test method names (Given_When_Then style) are intentional. -->
     <NoWarn>$(NoWarn);CA1707</NoWarn>
+    <!-- Override on the command line to test against another SDK: -p:JellyfinVersion=12.1.0 -->
+    <JellyfinVersion Condition="'$(JellyfinVersion)' == ''">12.1.0</JellyfinVersion>
   </PropertyGroup>
 
   <ItemGroup>
@@ -15,6 +17,13 @@
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <PackageReference Include="xunit" Version="2.9.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+
+    <!--
+      Unlike the product project's own Jellyfin.Model reference (ExcludeAssets=runtime, since a real Jellyfin server
+      supplies it there), tests run standalone with no host to provide it - the runtime DLL must actually be present
+      in the test output for LibrariesControllerTests to construct real VirtualFolderInfo instances.
+    -->
+    <PackageReference Include="Jellyfin.Model" Version="$(JellyfinVersion)" />
   </ItemGroup>
 
   <ItemGroup>
