@@ -13,8 +13,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <RootNamespace>Jellyfin.Plugin.StrmManager</RootNamespace>
-    <AssemblyVersion>0.1.0.0</AssemblyVersion>
-    <FileVersion>0.1.0.0</FileVersion>
+    <AssemblyVersion>0.2.0.0</AssemblyVersion>
+    <FileVersion>0.2.0.0</FileVersion>
     <!-- Override on the command line to compile the same source against another SDK: -p:JellyfinVersion=12.1.0 -->
     <JellyfinVersion Condition="'$(JellyfinVersion)' == ''">12.1.0</JellyfinVersion>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
