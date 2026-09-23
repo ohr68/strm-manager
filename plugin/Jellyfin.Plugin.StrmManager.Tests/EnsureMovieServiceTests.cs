@@ -138,5 +138,10 @@ public sealed class EnsureMovieServiceTests
             AddMovieCallCount++;
             return Task.FromResult(_adds.Dequeue());
         }
+
+        // EnsureMovieService (P3) never calls ProcessMovieAsync (P4 is an unused primitive) - this fake only
+        // implements IStrmManagerClient to satisfy the interface.
+        public Task<ProcessMovieResult> ProcessMovieAsync(Guid movieId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("EnsureMovieService does not call ProcessMovieAsync.");
     }
 }

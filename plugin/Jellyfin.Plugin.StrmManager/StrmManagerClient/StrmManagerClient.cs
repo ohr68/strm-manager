@@ -244,4 +244,183 @@ public sealed partial class StrmManagerClient(HttpClient httpClient, ILogger<Str
     {
         public Guid Id { get; init; }
     }
+
+    public async Task<ProcessMovieResult> ProcessMovieAsync(Guid movieId, CancellationToken cancellationToken)
+    {
+        if (httpClient.BaseAddress is null)
+        {
+            LogProcessNoBaseUrl(movieId);
+            return new ProcessMovieResult.Error("STRM Manager BaseUrl is not configured.");
+        }
+
+        var requestUri = new Uri($"api/movies/{movieId:D}/process", UriKind.Relative);
+
+        HttpResponseMessage response;
+        try
+        {
+            response = await httpClient.PostAsync(requestUri, content: null, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            // Same reasoning as GetByImdbIdAsync/AddMovieAsync: HttpClient's own timeout also throws
+            // OperationCanceledException, so only a cause OTHER than the caller's token is handled here.
+            LogProcessTimedOut(movieId);
+            return new ProcessMovieResult.Unreachable("Request timed out.");
+        }
+        catch (HttpRequestException exception)
+        {
+            LogProcessUnreachable(exception, movieId, exception.GetType().Name);
+            return new ProcessMovieResult.Unreachable(exception.GetType().Name);
+        }
+
+        using (response)
+        {
+            switch (response.StatusCode)
+            {
+                case HttpStatusCode.OK:
+                    return await ReadProcessedAsync(response, movieId, cancellationToken).ConfigureAwait(false);
+                case HttpStatusCode.Conflict:
+                    return await ReadConflictAsync(response, movieId, cancellationToken).ConfigureAwait(false);
+                case HttpStatusCode.NotFound:
+                    LogProcessNotFound(movieId);
+                    return new ProcessMovieResult.NotFound();
+                default:
+                    LogProcessUnexpectedStatus((int)response.StatusCode, movieId);
+                    return new ProcessMovieResult.Error($"Unexpected HTTP status {(int)response.StatusCode}.");
+            }
+        }
+    }
+
+    private async Task<ProcessMovieResult> ReadProcessedAsync(HttpResponseMessage response, Guid movieId, CancellationToken cancellationToken)
+    {
+        ProcessMovieResponseDto? dto;
+        try
+        {
+            dto = await response.Content.ReadFromJsonAsync<ProcessMovieResponseDto>(JsonOptions, cancellationToken).ConfigureAwait(false);
+        }
+        catch (JsonException exception)
+        {
+            LogProcessMalformedBody(exception, movieId);
+            return new ProcessMovieResult.Error("Malformed response body.");
+        }
+
+        if (dto is null || dto.MovieId == Guid.Empty || string.IsNullOrWhiteSpace(dto.Status))
+        {
+            LogProcessUnexpectedShape(movieId);
+            return new ProcessMovieResult.Error("Unexpected response shape.");
+        }
+
+        switch (dto.Status)
+        {
+            case "Completed":
+                LogProcessCompleted(dto.MovieId, dto.Attempts);
+                return new ProcessMovieResult.Completed(dto.MovieId, dto.Attempts, dto.SelectedSource?.Provider, dto.SelectedSource?.Name, dto.StrmPath);
+            case "Unavailable":
+                LogProcessUnavailable(dto.MovieId, dto.Attempts);
+                return new ProcessMovieResult.Unavailable(dto.Attempts, dto.Reason);
+            case "Error":
+                LogProcessingFailed(dto.MovieId, dto.Attempts);
+                return new ProcessMovieResult.ProcessingFailed(dto.Attempts, dto.Reason);
+            default:
+                LogProcessUnexpectedShape(movieId);
+                return new ProcessMovieResult.Error($"Unexpected processing status '{dto.Status}'.");
+        }
+    }
+
+    /// <summary>
+    /// A 409 is either Movies.AlreadyBeingProcessed or Movie.InvalidTransition - the standard ProblemDetails body's
+    /// "title" carries the backend's own error code (see ApiResults.Problem), which is the only way to tell them
+    /// apart at this client's boundary.
+    /// </summary>
+    private async Task<ProcessMovieResult> ReadConflictAsync(HttpResponseMessage response, Guid movieId, CancellationToken cancellationToken)
+    {
+        ProblemDetailsDto? problem;
+        try
+        {
+            problem = await response.Content.ReadFromJsonAsync<ProblemDetailsDto>(JsonOptions, cancellationToken).ConfigureAwait(false);
+        }
+        catch (JsonException exception)
+        {
+            LogProcessMalformedBody(exception, movieId);
+            return new ProcessMovieResult.Error("Malformed response body.");
+        }
+
+        switch (problem?.Title)
+        {
+            case "Movies.AlreadyBeingProcessed":
+                LogProcessAlreadyBeingProcessed(movieId);
+                return new ProcessMovieResult.AlreadyBeingProcessed();
+            case "Movie.InvalidTransition":
+                LogProcessInvalidTransition(movieId);
+                return new ProcessMovieResult.InvalidTransition();
+            default:
+                LogProcessUnexpectedShape(movieId);
+                return new ProcessMovieResult.Error("Unexpected 409 response shape.");
+        }
+    }
+
+    [LoggerMessage(Level = LogLevel.Error, Message = "STRM Manager process for movie {MovieId} skipped: no valid BaseUrl is configured")]
+    private partial void LogProcessNoBaseUrl(Guid movieId);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "STRM Manager process for movie {MovieId} timed out")]
+    private partial void LogProcessTimedOut(Guid movieId);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "STRM Manager process for movie {MovieId} failed to reach the server ({ExceptionType})")]
+    private partial void LogProcessUnreachable(Exception exception, Guid movieId, string exceptionType);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "STRM Manager process for movie {MovieId} completed after {Attempts} attempt(s)")]
+    private partial void LogProcessCompleted(Guid movieId, int attempts);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "STRM Manager process for movie {MovieId} reported Unavailable after {Attempts} attempt(s)")]
+    private partial void LogProcessUnavailable(Guid movieId, int attempts);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "STRM Manager process for movie {MovieId} reported a processing failure after {Attempts} attempt(s)")]
+    private partial void LogProcessingFailed(Guid movieId, int attempts);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "STRM Manager movie {MovieId} is already being processed by another request")]
+    private partial void LogProcessAlreadyBeingProcessed(Guid movieId);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "STRM Manager rejected processing movie {MovieId}: invalid state transition")]
+    private partial void LogProcessInvalidTransition(Guid movieId);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "STRM Manager has no movie {MovieId} to process")]
+    private partial void LogProcessNotFound(Guid movieId);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "STRM Manager returned unexpected status {StatusCode} processing movie {MovieId}")]
+    private partial void LogProcessUnexpectedStatus(int statusCode, Guid movieId);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "STRM Manager returned a malformed response body processing movie {MovieId}")]
+    private partial void LogProcessMalformedBody(Exception exception, Guid movieId);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "STRM Manager returned an unexpected response shape processing movie {MovieId}")]
+    private partial void LogProcessUnexpectedShape(Guid movieId);
+
+    /// <summary>Only the fields ProcessMovieResult needs; every other backend ProcessMovieResult field is ignored.</summary>
+    private sealed class ProcessMovieResponseDto
+    {
+        public Guid MovieId { get; init; }
+
+        public string Status { get; init; } = string.Empty;
+
+        public int Attempts { get; init; }
+
+        public SelectedSourceDto? SelectedSource { get; init; }
+
+        public string? StrmPath { get; init; }
+
+        public string? Reason { get; init; }
+    }
+
+    private sealed class SelectedSourceDto
+    {
+        public string? Provider { get; init; }
+
+        public string? Name { get; init; }
+    }
+
+    /// <summary>Only the "title" field of the standard ProblemDetails body - that is ApiResults.Problem's error code.</summary>
+    private sealed class ProblemDetailsDto
+    {
+        public string? Title { get; init; }
+    }
 }
