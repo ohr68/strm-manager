@@ -107,4 +107,35 @@ public sealed class CatalogController(IStrmManagerClient client) : ControllerBas
             _ => StatusCode(StatusCodes.Status500InternalServerError),
         };
     }
+
+    /// <summary>
+    /// UI-6c's read-only Movie Detail proxy. Pure pass-through like every other action on this controller - no
+    /// AddMovie/EnsureMovie/ProcessMovie/scan happens by fetching a movie's detail metadata, this is transport only.
+    /// </summary>
+    [HttpGet("Catalog/Movies/{imdbId}/Detail")]
+    public async Task<IActionResult> GetMovieDetail(string imdbId, CancellationToken cancellationToken)
+    {
+        MovieDetailResult result = await client.GetMovieDetailAsync(imdbId, cancellationToken).ConfigureAwait(false);
+
+        return result switch
+        {
+            MovieDetailResult.Found found => Ok(new
+            {
+                externalId = found.Detail.ExternalId,
+                title = found.Detail.Title,
+                year = found.Detail.Year,
+                runtimeMinutes = found.Detail.RuntimeMinutes,
+                description = found.Detail.Description,
+                genres = found.Detail.Genres,
+                imdbRating = found.Detail.ImdbRating,
+                posterUrl = found.Detail.PosterUrl,
+                backdropUrl = found.Detail.BackdropUrl,
+            }),
+            MovieDetailResult.NotFound => NotFound(),
+            MovieDetailResult.Invalid => BadRequest(),
+            MovieDetailResult.Unreachable unreachable => StatusCode(StatusCodes.Status503ServiceUnavailable, new { reason = unreachable.Reason }),
+            MovieDetailResult.Error error => StatusCode(StatusCodes.Status502BadGateway, new { reason = error.Reason }),
+            _ => StatusCode(StatusCodes.Status500InternalServerError),
+        };
+    }
 }

@@ -58,4 +58,12 @@ public interface IStrmManagerClient
     /// <see cref="OperationCanceledException"/>, not as a result value.
     /// </summary>
     Task<SearchMoviesResult> SearchMoviesAsync(string query, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Calls GET {BaseUrl}/api/catalog/movies/{imdbId}/detail - UI-6c's read-only Movie Detail lookup. Never throws
+    /// for an expected outcome - those are all represented in the returned <see cref="MovieDetailResult"/>. A
+    /// cancellation requested by <paramref name="cancellationToken"/> propagates as a normal
+    /// <see cref="OperationCanceledException"/>, not as a result value.
+    /// </summary>
+    Task<MovieDetailResult> GetMovieDetailAsync(string imdbId, CancellationToken cancellationToken);
 }

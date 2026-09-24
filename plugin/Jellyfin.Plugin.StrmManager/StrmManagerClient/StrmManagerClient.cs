@@ -742,4 +742,131 @@ public sealed partial class StrmManagerClient(HttpClient httpClient, IHttpClient
 
     [LoggerMessage(Level = LogLevel.Information, Message = "STRM Manager returned {MovieCount} movie search results")]
     private partial void LogSearchRetrieved(int movieCount);
+
+    public async Task<MovieDetailResult> GetMovieDetailAsync(string imdbId, CancellationToken cancellationToken)
+    {
+        if (httpClient.BaseAddress is null)
+        {
+            LogDetailNoBaseUrl(imdbId);
+            return new MovieDetailResult.Error("STRM Manager BaseUrl is not configured.");
+        }
+
+        var requestUri = new Uri($"api/catalog/movies/{Uri.EscapeDataString(imdbId)}/detail", UriKind.Relative);
+
+        HttpResponseMessage response;
+        try
+        {
+            response = await httpClient.GetAsync(requestUri, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            LogDetailTimedOut(imdbId);
+            return new MovieDetailResult.Unreachable("Request timed out.");
+        }
+        catch (HttpRequestException exception)
+        {
+            LogDetailUnreachable(exception, imdbId, exception.GetType().Name);
+            return new MovieDetailResult.Unreachable(exception.GetType().Name);
+        }
+
+        using (response)
+        {
+            switch (response.StatusCode)
+            {
+                case HttpStatusCode.OK:
+                    return await ReadMovieDetailAsync(response, imdbId, cancellationToken).ConfigureAwait(false);
+                case HttpStatusCode.NotFound:
+                    LogDetailNotFound(imdbId);
+                    return new MovieDetailResult.NotFound();
+                case HttpStatusCode.BadRequest:
+                    LogDetailInvalid(imdbId);
+                    return new MovieDetailResult.Invalid();
+                default:
+                    LogDetailUnexpectedStatus((int)response.StatusCode, imdbId);
+                    return new MovieDetailResult.Error($"Unexpected HTTP status {(int)response.StatusCode}.");
+            }
+        }
+    }
+
+    private async Task<MovieDetailResult> ReadMovieDetailAsync(HttpResponseMessage response, string imdbId, CancellationToken cancellationToken)
+    {
+        MovieDetailResponseDto? dto;
+        try
+        {
+            dto = await response.Content.ReadFromJsonAsync<MovieDetailResponseDto>(JsonOptions, cancellationToken).ConfigureAwait(false);
+        }
+        catch (JsonException exception)
+        {
+            LogDetailMalformedBody(exception, imdbId);
+            return new MovieDetailResult.Error("Malformed response body.");
+        }
+
+        // Parsed without throwing, but structurally not what MovieDetailResponse looks like - still not usable.
+        if (dto is null || string.IsNullOrWhiteSpace(dto.ExternalId) || string.IsNullOrWhiteSpace(dto.Title))
+        {
+            LogDetailUnexpectedShape(imdbId);
+            return new MovieDetailResult.Error("Unexpected response shape.");
+        }
+
+        LogDetailFound(imdbId);
+        return new MovieDetailResult.Found(new MovieDetail(
+            dto.ExternalId,
+            dto.Title,
+            dto.Year,
+            dto.RuntimeMinutes,
+            dto.Description,
+            dto.Genres ?? [],
+            dto.ImdbRating,
+            dto.PosterUrl,
+            dto.BackdropUrl));
+    }
+
+    [LoggerMessage(Level = LogLevel.Error, Message = "STRM Manager detail lookup for {ImdbId} skipped: no valid BaseUrl is configured")]
+    private partial void LogDetailNoBaseUrl(string imdbId);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "STRM Manager detail lookup for {ImdbId} timed out")]
+    private partial void LogDetailTimedOut(string imdbId);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "STRM Manager detail lookup for {ImdbId} failed to reach the server ({ExceptionType})")]
+    private partial void LogDetailUnreachable(Exception exception, string imdbId, string exceptionType);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "STRM Manager has no movie detail for {ImdbId}")]
+    private partial void LogDetailNotFound(string imdbId);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "STRM Manager rejected {ImdbId} as an invalid IMDb id for detail lookup")]
+    private partial void LogDetailInvalid(string imdbId);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "STRM Manager returned unexpected status {StatusCode} for detail lookup of {ImdbId}")]
+    private partial void LogDetailUnexpectedStatus(int statusCode, string imdbId);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "STRM Manager returned a malformed movie detail body for {ImdbId}")]
+    private partial void LogDetailMalformedBody(Exception exception, string imdbId);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "STRM Manager returned an unexpected movie detail body shape for {ImdbId}")]
+    private partial void LogDetailUnexpectedShape(string imdbId);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "STRM Manager returned movie detail for {ImdbId}")]
+    private partial void LogDetailFound(string imdbId);
+
+    /// <summary>Only the fields MovieDetail needs; matches the backend's own MovieDetailResponse. Description/poster/backdrop are transported as-is, never logged.</summary>
+    private sealed class MovieDetailResponseDto
+    {
+        public string? ExternalId { get; set; }
+
+        public string? Title { get; set; }
+
+        public int Year { get; set; }
+
+        public int? RuntimeMinutes { get; set; }
+
+        public string? Description { get; set; }
+
+        public List<string>? Genres { get; set; }
+
+        public string? ImdbRating { get; set; }
+
+        public string? PosterUrl { get; set; }
+
+        public string? BackdropUrl { get; set; }
+    }
 }

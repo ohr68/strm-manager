@@ -130,6 +130,9 @@ public sealed class ProcessMovieWorkerTests
 
         public Task<SearchMoviesResult> SearchMoviesAsync(string query, CancellationToken cancellationToken) =>
             throw new NotSupportedException("ProcessMovieWorker does not call SearchMoviesAsync.");
+
+        public Task<MovieDetailResult> GetMovieDetailAsync(string imdbId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("ProcessMovieWorker does not call GetMovieDetailAsync.");
     }
 
     private sealed class FakeServiceScopeFactory(IStrmManagerClient client) : IServiceScopeFactory

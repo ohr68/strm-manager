@@ -144,10 +144,67 @@ public sealed class CatalogControllerTests
         Assert.Equal(502, objectResult.StatusCode);
     }
 
+    [Fact]
+    public async Task GetMovieDetail_Found_Returns200WithLowercaseFields()
+    {
+        var detail = new MovieDetail("tt0468569", "The Dark Knight", 2008, 152, "...", ["Action", "Crime", "Drama"], "9.1", "https://example.test/poster.jpg", "https://example.test/backdrop.jpg");
+        var controller = new CatalogController(new FakeStrmManagerClient(detailResult: new MovieDetailResult.Found(detail)));
+
+        IActionResult result = await controller.GetMovieDetail("tt0468569", CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        Assert.Equal(200, ok.StatusCode);
+        Assert.Equal("tt0468569", ok.Value!.GetType().GetProperty("externalId")!.GetValue(ok.Value));
+        Assert.Equal("The Dark Knight", ok.Value.GetType().GetProperty("title")!.GetValue(ok.Value));
+    }
+
+    [Fact]
+    public async Task GetMovieDetail_NotFound_Returns404()
+    {
+        var controller = new CatalogController(new FakeStrmManagerClient(detailResult: new MovieDetailResult.NotFound()));
+
+        IActionResult result = await controller.GetMovieDetail("tt0000000", CancellationToken.None);
+
+        Assert.IsType<NotFoundResult>(result);
+    }
+
+    [Fact]
+    public async Task GetMovieDetail_Invalid_Returns400()
+    {
+        var controller = new CatalogController(new FakeStrmManagerClient(detailResult: new MovieDetailResult.Invalid()));
+
+        IActionResult result = await controller.GetMovieDetail("not-an-imdb-id", CancellationToken.None);
+
+        Assert.IsType<BadRequestResult>(result);
+    }
+
+    [Fact]
+    public async Task GetMovieDetail_Unreachable_Returns503()
+    {
+        var controller = new CatalogController(new FakeStrmManagerClient(detailResult: new MovieDetailResult.Unreachable("Connection refused")));
+
+        IActionResult result = await controller.GetMovieDetail("tt0468569", CancellationToken.None);
+
+        var objectResult = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(503, objectResult.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetMovieDetail_Error_Returns502()
+    {
+        var controller = new CatalogController(new FakeStrmManagerClient(detailResult: new MovieDetailResult.Error("Unexpected HTTP status 500.")));
+
+        IActionResult result = await controller.GetMovieDetail("tt0468569", CancellationToken.None);
+
+        var objectResult = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(502, objectResult.StatusCode);
+    }
+
     private sealed class FakeStrmManagerClient(
         CatalogMoviesResult? popularResult = null,
         MovieRowsResult? rowsResult = null,
-        SearchMoviesResult? searchResult = null) : IStrmManagerClient
+        SearchMoviesResult? searchResult = null,
+        MovieDetailResult? detailResult = null) : IStrmManagerClient
     {
         public Task<MovieLookupResult> GetByImdbIdAsync(string imdbId, CancellationToken cancellationToken) =>
             throw new NotSupportedException("CatalogController must not call GetByImdbIdAsync.");
@@ -172,5 +229,10 @@ public sealed class CatalogControllerTests
             searchResult is not null
                 ? Task.FromResult(searchResult)
                 : throw new NotSupportedException("Only SearchMovies should call SearchMoviesAsync.");
+
+        public Task<MovieDetailResult> GetMovieDetailAsync(string imdbId, CancellationToken cancellationToken) =>
+            detailResult is not null
+                ? Task.FromResult(detailResult)
+                : throw new NotSupportedException("Only GetMovieDetail should call GetMovieDetailAsync.");
     }
 }

@@ -208,5 +208,8 @@ public sealed class MoviesControllerWatchTests
 
         public Task<SearchMoviesResult> SearchMoviesAsync(string query, CancellationToken cancellationToken) =>
             throw new NotSupportedException("Watch must not call SearchMoviesAsync.");
+
+        public Task<MovieDetailResult> GetMovieDetailAsync(string imdbId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("Watch must not call GetMovieDetailAsync.");
     }
 }
