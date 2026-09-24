@@ -1,4 +1,5 @@
 using Jellyfin.Plugin.StrmManager.Configuration;
+using Jellyfin.Plugin.StrmManager.Home;
 using Jellyfin.Plugin.StrmManager.Movies;
 using Jellyfin.Plugin.StrmManager.Processing;
 using Jellyfin.Plugin.StrmManager.StrmManagerClient;
@@ -39,6 +40,10 @@ public sealed class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<ProcessMovieQueue>();
         serviceCollection.AddSingleton<IProcessMovieQueue>(sp => sp.GetRequiredService<ProcessMovieQueue>());
         serviceCollection.AddHostedService<ProcessMovieWorker>();
+
+        // UI-9.6A: optional Home Screen Sections integration. The hosted service
+        // performs a no-op when HSS is not installed or its registration API is unavailable.
+        serviceCollection.AddHostedService<HssRegistrationService>();
     }
 
     /// <summary>
