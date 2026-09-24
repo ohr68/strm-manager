@@ -327,7 +327,9 @@ state and the user re-selects/re-clicks Assistir, which is safe and idempotent s
             var PROCESSING_STATUSES = { Pending: true, Searching: true, Validating: true };
             var STATUS_POLL_INTERVAL_MS = 1500;
             var LIBRARY_POLL_INTERVAL_MS = 1500;
-            var LIBRARY_POLL_WINDOW_MS = 30000;
+            var LIBRARY_POLL_WINDOW_MS = 45000;
+            var LIBRARY_STABLE_POLLS_REQUIRED = 5;
+            var LIBRARY_STABLE_MIN_MS = 6000;
 
             // Bumped on every new selection - every async step below checks it before touching the DOM, so a stale
             // watch/poll chain from a previously-selected movie can never overwrite or navigate for the current one.
@@ -786,7 +788,7 @@ state and the user re-selects/re-clicks Assistir, which is safe and idempotent s
                     }
 
                     if (result.ok) {
-                        pollForJellyfinItem(movie, token, Date.now());
+                        pollForJellyfinItem(movie, token, Date.now(), 0, null, null);
                         return;
                     }
 
@@ -796,24 +798,54 @@ state and the user re-selects/re-clicks Assistir, which is safe and idempotent s
                 });
             }
 
-            function pollForJellyfinItem(movie, token, startedAt) {
-                if (token !== selectionToken) {
-                    return;
-                }
+            function pollForJellyfinItem(
+                movie,
+                token,
+                startedAt,
+                stableCount,
+                candidateSince,
+                candidateItemId
+            ) {
+                if (token !== selectionToken) return;
 
                 fetchJson("GET", "StrmManager/Libraries/Movies/By-Imdb/" + encodeURIComponent(movie.externalId)).then(function (result) {
-                    if (token !== selectionToken) {
-                        return;
-                    }
+                    if (token !== selectionToken) return;
 
                     if (result.ok && result.body && result.body.itemId) {
-                        Dashboard.navigate("details?id=" + result.body.itemId);
+                        var now = Date.now();
+                        var itemId = result.body.itemId;
+
+                        // Readiness is not monotonic while Jellyfin refreshes the item.
+                        if (candidateItemId !== itemId) {
+                            stableCount = 1;
+                            candidateSince = now;
+                            candidateItemId = itemId;
+                        } else {
+                            stableCount += 1;
+                        }
+
+                        if (
+                            stableCount >= LIBRARY_STABLE_POLLS_REQUIRED &&
+                            now - candidateSince >= LIBRARY_STABLE_MIN_MS
+                        ) {
+                            Dashboard.navigate("details?id=" + itemId);
+                            return;
+                        }
+
+                        continueOrGiveUpLibraryPoll(
+                            movie,
+                            token,
+                            startedAt,
+                            stableCount,
+                            candidateSince,
+                            candidateItemId
+                        );
                         return;
                     }
 
                     if (!result.ok && result.status === 404) {
-                        // Not discovered yet - keep polling within the bounded window.
-                        continueOrGiveUpLibraryPoll(movie, token, startedAt);
+                        // A 404 invalidates any previous successful candidate observation.
+                        continueOrGiveUpLibraryPoll(movie, token, startedAt, 0, null, null);
                         return;
                     }
 
@@ -824,7 +856,16 @@ state and the user re-selects/re-clicks Assistir, which is safe and idempotent s
                 });
             }
 
-            function continueOrGiveUpLibraryPoll(movie, token, startedAt) {
+            function continueOrGiveUpLibraryPoll(
+                movie,
+                token,
+                startedAt,
+                stableCount,
+                candidateSince,
+                candidateItemId
+            ) {
+                if (token !== selectionToken) return;
+
                 if (Date.now() - startedAt >= LIBRARY_POLL_WINDOW_MS) {
                     setStatus(token, NOT_YET_IN_LIBRARY_MESSAGE);
                     setActivity(token, false);
@@ -833,7 +874,14 @@ state and the user re-selects/re-clicks Assistir, which is safe and idempotent s
                 }
 
                 window.setTimeout(function () {
-                    pollForJellyfinItem(movie, token, startedAt);
+                    pollForJellyfinItem(
+                        movie,
+                        token,
+                        startedAt,
+                        stableCount,
+                        candidateSince,
+                        candidateItemId
+                    );
                 }, LIBRARY_POLL_INTERVAL_MS);
             }
 
