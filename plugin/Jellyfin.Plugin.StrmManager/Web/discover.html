@@ -32,14 +32,19 @@ state and the user re-selects/re-clicks Assistir, which is safe and idempotent s
             <div id="MovieRowsContainer"></div>
 
             <div class="strm-detail" id="MovieDetail" hidden>
-                <div class="strm-detail-poster-wrap" id="MovieDetailPosterWrap"></div>
-                <div class="strm-detail-info">
-                    <h3 class="strm-detail-title" id="MovieDetailTitle"></h3>
-                    <div class="strm-detail-year" id="MovieDetailYear"></div>
-                    <button is="emby-button" type="button" class="raised block emby-button strm-watch-button" id="WatchButton">
-                        <span>Assistir</span>
-                    </button>
-                    <div class="strm-detail-status" id="MovieDetailStatus" role="status" aria-live="polite"></div>
+                <div class="strm-detail-backdrop" id="MovieDetailBackdrop"></div>
+                <div class="strm-detail-body">
+                    <div class="strm-detail-poster-wrap" id="MovieDetailPosterWrap"></div>
+                    <div class="strm-detail-info">
+                        <h3 class="strm-detail-title" id="MovieDetailTitle"></h3>
+                        <div class="strm-detail-meta" id="MovieDetailMeta"></div>
+                        <div class="strm-detail-genres" id="MovieDetailGenres" hidden></div>
+                        <div class="strm-detail-description" id="MovieDetailDescription" hidden></div>
+                        <button is="emby-button" type="button" class="raised block emby-button strm-watch-button" id="WatchButton">
+                            <span>Assistir</span>
+                        </button>
+                        <div class="strm-detail-status" id="MovieDetailStatus" role="status" aria-live="polite"></div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -162,12 +167,44 @@ state and the user re-selects/re-clicks Assistir, which is safe and idempotent s
         }
 
         #StrmManagerDiscoverPage .strm-detail {
+            position: relative;
+            overflow: hidden;
+            margin: 1.5em 0;
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.04);
+        }
+
+        /* Hero backdrop (UI-6d) - an absolutely positioned image behind strm-detail-body, filling whatever height
+           the body's own content establishes. Left empty (no <img> appended) when no backdropUrl is available -
+           the existing rgba background above still shows through, so a missing backdrop never breaks the layout. */
+        #StrmManagerDiscoverPage .strm-detail-backdrop {
+            position: absolute;
+            inset: 0;
+            z-index: 0;
+        }
+
+        #StrmManagerDiscoverPage .strm-detail-backdrop img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: block;
+            opacity: 0.4;
+        }
+
+        /* A static gradient overlay (no JS) so title/meta/synopsis text stays readable over any backdrop image. */
+        #StrmManagerDiscoverPage .strm-detail-backdrop::after {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(180deg, rgba(15, 15, 15, 0.35) 0%, rgba(15, 15, 15, 0.92) 100%);
+        }
+
+        #StrmManagerDiscoverPage .strm-detail-body {
+            position: relative;
+            z-index: 1;
             display: flex;
             gap: 1.5em;
-            margin: 1.5em 0;
-            padding: 1em;
-            background: rgba(255, 255, 255, 0.04);
-            border-radius: 8px;
+            padding: 1.5em;
         }
 
         #StrmManagerDiscoverPage .strm-detail-poster-wrap {
@@ -179,19 +216,36 @@ state and the user re-selects/re-clicks Assistir, which is safe and idempotent s
         #StrmManagerDiscoverPage .strm-detail-info {
             display: flex;
             flex-direction: column;
-            gap: 0.4em;
+            gap: 0.5em;
             min-width: 0;
+            max-width: 42em;
         }
 
         #StrmManagerDiscoverPage .strm-detail-title {
             margin: 0;
             color: #fff;
-            font-size: 1.3em;
+            font-size: 1.5em;
+            font-weight: 700;
         }
 
-        #StrmManagerDiscoverPage .strm-detail-year {
-            color: #999;
+        #StrmManagerDiscoverPage .strm-detail-meta {
+            color: #ddd;
             font-size: 0.9em;
+            min-height: 1.1em;
+        }
+
+        /* Genres are visually secondary - smaller, muted, uppercase - versus the title/meta line above. */
+        #StrmManagerDiscoverPage .strm-detail-genres {
+            color: #aaa;
+            font-size: 0.78em;
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+        }
+
+        #StrmManagerDiscoverPage .strm-detail-description {
+            color: #eee;
+            font-size: 0.95em;
+            line-height: 1.5;
         }
 
         #StrmManagerDiscoverPage .strm-watch-button {
@@ -206,13 +260,17 @@ state and the user re-selects/re-clicks Assistir, which is safe and idempotent s
         }
 
         @media (max-width: 600px) {
-            #StrmManagerDiscoverPage .strm-detail {
+            #StrmManagerDiscoverPage .strm-detail-body {
                 flex-direction: column;
             }
 
             #StrmManagerDiscoverPage .strm-detail-poster-wrap {
                 width: 140px;
                 height: 210px;
+            }
+
+            #StrmManagerDiscoverPage .strm-detail-info {
+                max-width: 100%;
             }
         }
     </style>
@@ -244,6 +302,12 @@ state and the user re-selects/re-clicks Assistir, which is safe and idempotent s
             // the search results section only. An older search's response arriving after a newer one is simply
             // discarded; it never touches the Watch pipeline above.
             var searchRequestToken = 0;
+
+            // Bumped on every Movie Detail enrichment request (UI-6d) - deliberately its OWN counter, independent
+            // of selectionToken and never read/written by any Watch function. Selecting movie A, then quickly
+            // movie B, then A's detail response arriving late: A's response is discarded because this token has
+            // already moved on to B's request, regardless of what selectionToken/the Watch state machine are doing.
+            var detailRequestToken = 0;
 
             // Authenticated transport for every UI-3 plugin call - raw fetch(ApiClient.getUrl(path)) does NOT carry
             // Jellyfin's auth (proven the hard way: [Authorize(Policy = RequiresElevation)] rejects it with 401
@@ -288,6 +352,23 @@ state and the user re-selects/re-clicks Assistir, which is safe and idempotent s
                 } else {
                     showFallback();
                 }
+            }
+
+            // Fills an EXISTING backdrop container with a hero image, or leaves it empty when there is no URL -
+            // no fallback placeholder needed (unlike fillPoster): the detail panel's own background already
+            // renders fine with nothing behind it, so a missing/failed backdrop never breaks the layout.
+            function fillBackdrop(container, url) {
+                container.innerHTML = "";
+
+                if (!url) {
+                    return;
+                }
+
+                var img = document.createElement("img");
+                img.loading = "lazy";
+                img.alt = "";
+                img.src = url;
+                container.appendChild(img);
             }
 
             function renderMovies(container, movies) {
@@ -462,10 +543,20 @@ state and the user re-selects/re-clicks Assistir, which is safe and idempotent s
                 var detail = document.querySelector("#MovieDetail");
                 detail.hidden = false;
 
+                // Basic info, immediately, from the already-known CatalogMovie - never waits on the detail request.
                 fillPoster(document.querySelector("#MovieDetailPosterWrap"), movie, "strm-detail-poster", "strm-detail-poster-fallback");
-
+                fillBackdrop(document.querySelector("#MovieDetailBackdrop"), null);
                 document.querySelector("#MovieDetailTitle").textContent = movie.title || "";
-                document.querySelector("#MovieDetailYear").textContent = movie.year || "";
+                document.querySelector("#MovieDetailMeta").textContent = movie.year ? String(movie.year) : "";
+
+                var genresEl = document.querySelector("#MovieDetailGenres");
+                genresEl.hidden = true;
+                genresEl.textContent = "";
+
+                var descriptionEl = document.querySelector("#MovieDetailDescription");
+                descriptionEl.hidden = true;
+                descriptionEl.textContent = "";
+
                 setStatus(token, "");
 
                 var watchButton = document.querySelector("#WatchButton");
@@ -475,6 +566,71 @@ state and the user re-selects/re-clicks Assistir, which is safe and idempotent s
                 };
 
                 detail.scrollIntoView({ behavior: "smooth", block: "nearest" });
+
+                loadMovieDetail(movie);
+            }
+
+            // ---- Rich Movie Detail enrichment (UI-6d) ------------------------------------------------------------
+            // Read-only, browse-only: a single GET to the plugin's Movie Detail proxy, which itself only transports
+            // Cinemeta metadata (see CatalogController.GetMovieDetail) - no AddMovie/EnsureMovie/ProcessMovie/scan
+            // is reachable from here. Enrichment is purely additive to what selectMovie already rendered; Assistir
+            // and the whole Watch pipeline below never depend on this request succeeding, being fast, or existing
+            // at all - a loading/failed/404/incomplete detail response simply leaves the basic view as it was.
+
+            function loadMovieDetail(movie) {
+                detailRequestToken += 1;
+                var token = detailRequestToken;
+
+                fetchJson("GET", "StrmManager/Catalog/Movies/" + encodeURIComponent(movie.externalId) + "/Detail").then(function (result) {
+                    if (token !== detailRequestToken) {
+                        return;
+                    }
+
+                    if (result.ok && result.body) {
+                        enrichMovieDetail(result.body);
+                    }
+
+                    // Loading/404/unreachable/error: no friendly message needed here - the basic detail selectMovie
+                    // already rendered (poster/title/year/Assistir) stays exactly as usable as before.
+                });
+            }
+
+            function enrichMovieDetail(detail) {
+                fillBackdrop(document.querySelector("#MovieDetailBackdrop"), detail.backdropUrl);
+
+                if (detail.posterUrl) {
+                    fillPoster(
+                        document.querySelector("#MovieDetailPosterWrap"),
+                        { title: detail.title, posterUrl: detail.posterUrl },
+                        "strm-detail-poster",
+                        "strm-detail-poster-fallback");
+                }
+
+                document.querySelector("#MovieDetailTitle").textContent = detail.title || "";
+
+                var metaParts = [];
+                if (detail.year) {
+                    metaParts.push(String(detail.year));
+                }
+                if (detail.runtimeMinutes) {
+                    metaParts.push(detail.runtimeMinutes + " min");
+                }
+                if (detail.imdbRating) {
+                    metaParts.push("IMDb " + detail.imdbRating);
+                }
+                document.querySelector("#MovieDetailMeta").textContent = metaParts.join(" • ");
+
+                if (detail.genres && detail.genres.length > 0) {
+                    var genresEl = document.querySelector("#MovieDetailGenres");
+                    genresEl.textContent = detail.genres.join(" • ");
+                    genresEl.hidden = false;
+                }
+
+                if (detail.description) {
+                    var descriptionEl = document.querySelector("#MovieDetailDescription");
+                    descriptionEl.textContent = detail.description;
+                    descriptionEl.hidden = false;
+                }
             }
 
             function setStatus(token, text) {
