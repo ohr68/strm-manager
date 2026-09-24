@@ -31,11 +31,6 @@
     <PackageReference Include="Jellyfin.Model" Version="$(JellyfinVersion)">
       <ExcludeAssets>runtime</ExcludeAssets>
     </PackageReference>
-    <!-- HSS integration uses JObject only as the reflection boundary expected by Home Screen Sections.
-         Jellyfin already provides Newtonsoft.Json at runtime; do not ship another copy with this plugin. -->
-    <PackageReference Include="Newtonsoft.Json" Version="13.0.1">
-      <ExcludeAssets>runtime</ExcludeAssets>
-    </PackageReference>
   </ItemGroup>
 
   <ItemGroup>

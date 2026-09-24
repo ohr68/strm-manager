@@ -40,10 +40,6 @@ public sealed class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<ProcessMovieQueue>();
         serviceCollection.AddSingleton<IProcessMovieQueue>(sp => sp.GetRequiredService<ProcessMovieQueue>());
         serviceCollection.AddHostedService<ProcessMovieWorker>();
-
-        // UI-9.6A: optional Home Screen Sections integration. The hosted service
-        // performs a no-op when HSS is not installed or its registration API is unavailable.
-        serviceCollection.AddHostedService<HssRegistrationService>();
     }
 
     /// <summary>
