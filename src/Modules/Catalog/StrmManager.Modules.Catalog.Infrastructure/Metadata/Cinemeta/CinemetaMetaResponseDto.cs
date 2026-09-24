@@ -60,6 +60,21 @@ internal sealed class CinemetaMetaDto
     public string? Status { get; set; }
 
     public List<CinemetaVideoDto>? Videos { get; set; }
+
+    /// <summary>Movies only (UI-6b) - a synopsis/overview. Verified live (UI-6a) for both test ids; never guaranteed.</summary>
+    public string? Description { get; set; }
+
+    /// <summary>Movies only (UI-6b) - Cinemeta's own genre tags. Verified live (UI-6a); same field name/shape the catalog item DTO already uses.</summary>
+    public List<string>? Genre { get; set; }
+
+    /// <summary>Movies only (UI-6b) - Cinemeta's own free-form rating string (e.g. "9.1"). Verified live (UI-6a); never parsed/validated, passed through as-is.</summary>
+    public string? ImdbRating { get; set; }
+
+    /// <summary>Movies only (UI-6b) - a ready-to-use absolute poster image URL, verified live (UI-6a). Distinct from the catalog item DTO's own Poster - this DTO is meta/movie/{id}.json, a different resource.</summary>
+    public string? Poster { get; set; }
+
+    /// <summary>Movies only (UI-6b) - a ready-to-use absolute backdrop/background image URL, verified live (UI-6a). Not available anywhere on the catalog item DTO - this is the only source of a backdrop image.</summary>
+    public string? Background { get; set; }
 }
 
 internal sealed class CinemetaVideoDto

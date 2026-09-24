@@ -37,6 +37,22 @@ internal sealed partial class CinemetaMetadataProvider(HttpClient httpClient, IL
             cancellationToken);
 
     /// <summary>
+    /// UI-6b - the exact same HTTP/error-handling path as GetMovieAsync (same GetMetaAsync helper, same "movie"
+    /// resource, same unknown-movie-stub detection), just a different mapper (MapMovieDetail) producing a separate,
+    /// display-only MovieDetail. This method has no relationship to AddMovie/EnsureMovie and touches no repository -
+    /// it is a plain read-through to Cinemeta, nothing else.
+    /// </summary>
+    public Task<Result<MovieDetail>> GetMovieDetailAsync(string externalId, CancellationToken cancellationToken = default) =>
+        GetMetaAsync(
+            "movie",
+            externalId,
+            CinemetaMetadataMapper.MapMovieDetail,
+            CinemetaUnknownMedia.IsUnknownMovie,
+            MetadataProviderErrors.MovieNotFound(ProviderName, externalId),
+            (_, elapsedMs) => LogMovieDetailRetrieved(logger, externalId, elapsedMs),
+            cancellationToken);
+
+    /// <summary>
     /// The single HTTP/error-handling path for GET meta/{type}/{id}.json - the two
     /// callers differ only in the media type, the mapper, how that type's HTTP-200
     /// "unknown id" response is recognized, and the not-found error.
@@ -129,6 +145,9 @@ internal sealed partial class CinemetaMetadataProvider(HttpClient httpClient, IL
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Retrieved movie metadata for {ExternalId} from Cinemeta in {ElapsedMs}ms")]
     private static partial void LogMovieRetrieved(ILogger logger, string externalId, long elapsedMs);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Retrieved movie detail for {ExternalId} from Cinemeta in {ElapsedMs}ms")]
+    private static partial void LogMovieDetailRetrieved(ILogger logger, string externalId, long elapsedMs);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Cinemeta has no {MediaType} metadata for {ExternalId} ({ElapsedMs}ms)")]
     private static partial void LogNotFound(ILogger logger, string mediaType, string externalId, long elapsedMs);

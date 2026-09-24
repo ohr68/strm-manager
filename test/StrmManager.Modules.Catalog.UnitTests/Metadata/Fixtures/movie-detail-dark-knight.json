@@ -1,0 +1,16 @@
+{
+  "meta": {
+    "id": "tt0468569",
+    "type": "movie",
+    "name": "The Dark Knight",
+    "year": "2008",
+    "releaseInfo": "2008",
+    "released": "2008-07-18T00:00:00.000Z",
+    "runtime": "152 min",
+    "description": "When a menace known as the Joker wreaks havoc and chaos on the people of Gotham, Batman, James Gordon and Harvey Dent must work together to put an end to the madness.",
+    "genre": ["Action", "Crime", "Drama"],
+    "imdbRating": "9.1",
+    "poster": "https://images.metahub.space/poster/small/tt0468569/img",
+    "background": "https://images.metahub.space/background/medium/tt0468569/img"
+  }
+}

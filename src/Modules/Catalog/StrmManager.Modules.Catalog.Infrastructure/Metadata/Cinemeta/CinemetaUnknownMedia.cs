@@ -25,7 +25,8 @@ internal static class CinemetaUnknownMedia
 
     /// <summary>
     /// Unknown movie id: a meta object carrying an id and exactly the properties type
-    /// ("movie") and behaviorHints - no name/year/release/runtime/status/videos, no other
+    /// ("movie") and behaviorHints - no name/year/release/runtime/status/videos, no
+    /// description/genre/imdbRating/poster/background (UI-6b's display fields), no other
     /// property, and nothing else at the top level.
     /// </summary>
     public static bool IsUnknownMovie(CinemetaMetaResponseDto response)
@@ -41,7 +42,12 @@ internal static class CinemetaUnknownMedia
             !string.IsNullOrWhiteSpace(meta.Released) ||
             !string.IsNullOrWhiteSpace(meta.Runtime) ||
             !string.IsNullOrWhiteSpace(meta.Status) ||
-            meta.Videos is { Count: > 0 })
+            meta.Videos is { Count: > 0 } ||
+            !string.IsNullOrWhiteSpace(meta.Description) ||
+            meta.Genre is { Count: > 0 } ||
+            !string.IsNullOrWhiteSpace(meta.ImdbRating) ||
+            !string.IsNullOrWhiteSpace(meta.Poster) ||
+            !string.IsNullOrWhiteSpace(meta.Background))
         {
             return false;
         }

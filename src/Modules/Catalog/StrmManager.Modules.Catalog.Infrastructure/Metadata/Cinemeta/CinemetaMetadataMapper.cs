@@ -76,6 +76,42 @@ internal static partial class CinemetaMetadataMapper
             releaseAtUtc);
     }
 
+    /// <summary>
+    /// Maps a Cinemeta movie meta object into display-only MovieDetail (UI-6b) - a separate sibling of MapMovie,
+    /// never merged with it. Reuses the exact same id/name/year guard clauses and the same tested
+    /// ParseRuntimeMinutes/TryParseYear helpers as MapMovie, so both mappers stay consistent about what makes a
+    /// movie meta object usable at all. Description/genres/rating/poster/backdrop are all optional and simply null
+    /// (or empty for genres) when Cinemeta does not supply them - never invented, never a failure on their own.
+    /// </summary>
+    public static Result<MovieDetail> MapMovieDetail(CinemetaMetaDto meta)
+    {
+        if (string.IsNullOrWhiteSpace(meta.Id))
+        {
+            return Result.Failure<MovieDetail>(MetadataProviderErrors.InvalidResponse(ProviderName, "missing movie id"));
+        }
+
+        if (string.IsNullOrWhiteSpace(meta.Name))
+        {
+            return Result.Failure<MovieDetail>(MetadataProviderErrors.InvalidResponse(ProviderName, "missing movie name"));
+        }
+
+        if (!TryParseYear(meta.ReleaseInfo, out int year))
+        {
+            return Result.Failure<MovieDetail>(MetadataProviderErrors.InvalidResponse(ProviderName, "missing or invalid release year"));
+        }
+
+        return new MovieDetail(
+            meta.Id,
+            meta.Name,
+            year,
+            ParseRuntimeMinutes(meta.Runtime),
+            meta.Description,
+            meta.Genre ?? [],
+            meta.ImdbRating,
+            meta.Poster,
+            meta.Background);
+    }
+
     private const string TmdbIdProperty = "moviedb_id";
     private const long MaxTmdbId = 9_999_999_999;
 
