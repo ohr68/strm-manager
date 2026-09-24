@@ -736,7 +736,7 @@ state and the user re-selects/re-clicks Assistir, which is safe and idempotent s
                 setStatus(token, FRIENDLY_STATUS[status] || GENERIC_FAILURE_MESSAGE);
 
                 if (status === "Completed") {
-                    beginLibraryHandoff(movie, token);
+                    beginCompletedHandoff(movie, token);
                     return;
                 }
 
@@ -773,7 +773,39 @@ state and the user re-selects/re-clicks Assistir, which is safe and idempotent s
                 });
             }
 
-            // ---- Completed -> library scan + item handoff (UI-3b) ------------------------------------------------
+            // ---- Completed -> existing-item fast path or library handoff ------------------------------------------------
+
+            function beginCompletedHandoff(movie, token) {
+                if (token !== selectionToken) {
+                    return;
+                }
+
+                setStatus(token, HANDOFF_MESSAGE);
+
+                fetchJson(
+                    "GET",
+                    "StrmManager/Libraries/Movies/By-Imdb/" +
+                        encodeURIComponent(movie.externalId)
+                ).then(function (result) {
+                    if (token !== selectionToken) {
+                        return;
+                    }
+
+                    if (result.ok && result.body && result.body.itemId) {
+                        Dashboard.navigate("details?id=" + result.body.itemId);
+                        return;
+                    }
+
+                    if (result.status === 404) {
+                        beginLibraryHandoff(movie, token);
+                        return;
+                    }
+
+                    setStatus(token, GENERIC_FAILURE_MESSAGE);
+                    setActivity(token, false);
+                    setWatchButtonEnabled(token, true);
+                });
+            }
 
             function beginLibraryHandoff(movie, token) {
                 // UI-7a: from here on the app is just "opening the movie" from the user's perspective - the friendly
