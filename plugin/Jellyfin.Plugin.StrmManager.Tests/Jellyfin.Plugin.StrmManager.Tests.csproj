@@ -24,6 +24,14 @@
       in the test output for LibrariesControllerTests to construct real VirtualFolderInfo instances.
     -->
     <PackageReference Include="Jellyfin.Model" Version="$(JellyfinVersion)" />
+
+    <!--
+      Same reasoning as Jellyfin.Model above - LibrariesControllerTests (UI-7.1a) constructs real Movie/BaseItem
+      instances for BuildFindMovieResult, so MediaBrowser.Controller.dll must actually be present in the test
+      output too, unlike the product project's own reference (ExcludeAssets=runtime, since a real Jellyfin server
+      supplies it there).
+    -->
+    <PackageReference Include="Jellyfin.Controller" Version="$(JellyfinVersion)" />
   </ItemGroup>
 
   <ItemGroup>

@@ -4,6 +4,7 @@ using MediaBrowser.Common.Api;
 using MediaBrowser.Controller.Dto;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
+using MediaBrowser.Controller.Providers;
 using MediaBrowser.Model.Entities;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
@@ -22,7 +23,7 @@ namespace Jellyfin.Plugin.StrmManager.Api;
 [ApiController]
 [Route("StrmManager")]
 [Authorize(Policy = Policies.RequiresElevation)]
-public sealed class LibrariesController(ILibraryManager libraryManager) : ControllerBase
+public sealed class LibrariesController(ILibraryManager libraryManager, IProviderManager providerManager) : ControllerBase
 {
     [HttpGet("Libraries")]
     public ActionResult<IReadOnlyList<LibraryOption>> GetLibraries() =>
@@ -76,14 +77,35 @@ public sealed class LibrariesController(ILibraryManager libraryManager) : Contro
 
         IReadOnlyList<BaseItem> items = libraryManager.GetItemList(query);
 
-        return items.Count switch
+        return BuildFindMovieResult(items, providerManager.GetRefreshQueue());
+    }
+
+    /// <summary>
+    /// Pure decision logic for FindMovieByImdbId - kept separate and public so it can be unit-tested directly with
+    /// plain BaseItem/Movie instances, without stubbing ILibraryManager/IProviderManager (same reasoning already
+    /// established for ProjectLibraries/IsValidImdbId - those interfaces are too large to meaningfully stub).
+    /// </summary>
+    public static IActionResult BuildFindMovieResult(IReadOnlyList<BaseItem> items, IReadOnlySet<Guid> refreshQueue)
+    {
+        switch (items.Count)
         {
-            0 => NotFound(),
-            1 => Ok(new { itemId = items[0].Id }),
-            // GetItemList's result ordering with no explicit sort is not something this slice verified as stable -
-            // reporting the ambiguity is safer than guessing a "first" result and silently picking the wrong movie.
-            _ => StatusCode(StatusCodes.Status409Conflict, new { reason = "Multiple Jellyfin items matched this IMDb id." }),
-        };
+            case 0:
+                return new NotFoundResult();
+            case 1:
+                // UI-7.1a: Jellyfin can expose a newly-discovered item before its own metadata refresh
+                // (title/overview/images) has finished - the client already treats 404 as "not ready yet" and
+                // keeps polling, so a match still pending refresh is reported the same way as no match at all.
+                if (refreshQueue.Contains(items[0].Id))
+                {
+                    return new NotFoundResult();
+                }
+
+                return new OkObjectResult(new { itemId = items[0].Id });
+            default:
+                // GetItemList's result ordering with no explicit sort is not something this slice verified as stable -
+                // reporting the ambiguity is safer than guessing a "first" result and silently picking the wrong movie.
+                return new ConflictObjectResult(new { reason = "Multiple Jellyfin items matched this IMDb id." });
+        }
     }
 
     private static readonly Regex ImdbIdPattern = new(@"^tt\d{7,9}$", RegexOptions.Compiled);
