@@ -43,7 +43,10 @@ state and the user re-selects/re-clicks Assistir, which is safe and idempotent s
                         <button is="emby-button" type="button" class="raised block emby-button strm-watch-button" id="WatchButton">
                             <span>Assistir</span>
                         </button>
-                        <div class="strm-detail-status" id="MovieDetailStatus" role="status" aria-live="polite"></div>
+                        <div class="strm-detail-status-row">
+                            <span class="strm-activity-indicator" id="MovieDetailActivity" hidden aria-hidden="true"></span>
+                            <div class="strm-detail-status" id="MovieDetailStatus" role="status" aria-live="polite"></div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -259,6 +262,35 @@ state and the user re-selects/re-clicks Assistir, which is safe and idempotent s
             min-height: 1.2em;
         }
 
+        #StrmManagerDiscoverPage .strm-detail-status-row {
+            display: flex;
+            align-items: center;
+            gap: 0.5em;
+        }
+
+        /* Subtle CSS-only pulse (UI-7a) - visible only while the Watch lifecycle is actively doing work
+           (STARTING/Pending/Searching/Validating/Completed-handoff); hidden for every terminal state. */
+        #StrmManagerDiscoverPage .strm-activity-indicator {
+            width: 0.6em;
+            height: 0.6em;
+            flex: 0 0 auto;
+            border-radius: 50%;
+            background: #00a4dc;
+            animation: strm-activity-pulse 1.2s ease-in-out infinite;
+        }
+
+        @keyframes strm-activity-pulse {
+            0%, 100% {
+                opacity: 0.35;
+                transform: scale(0.85);
+            }
+
+            50% {
+                opacity: 1;
+                transform: scale(1.15);
+            }
+        }
+
         @media (max-width: 600px) {
             #StrmManagerDiscoverPage .strm-detail-body {
                 flex-direction: column;
@@ -289,6 +321,9 @@ state and the user re-selects/re-clicks Assistir, which is safe and idempotent s
             var GENERIC_FAILURE_MESSAGE = "Não foi possível preparar o conteúdo agora.";
             var BUSY_MESSAGE = "O servidor está ocupado. Tente novamente em instantes.";
             var NOT_YET_IN_LIBRARY_MESSAGE = "O conteúdo foi preparado, mas ainda não apareceu na biblioteca. Tente novamente em instantes.";
+            // UI-7a: shown once Completed triggers the scan/lookup handoff - from the user's perspective the app is
+            // simply opening the movie; no mention of scanning, polling, or item lookup.
+            var HANDOFF_MESSAGE = "Abrindo no Jellyfin...";
             var PROCESSING_STATUSES = { Pending: true, Searching: true, Validating: true };
             var STATUS_POLL_INTERVAL_MS = 1500;
             var LIBRARY_POLL_INTERVAL_MS = 1500;
@@ -557,6 +592,7 @@ state and the user re-selects/re-clicks Assistir, which is safe and idempotent s
                 descriptionEl.hidden = true;
                 descriptionEl.textContent = "";
 
+                document.querySelector("#MovieDetailActivity").hidden = true;
                 setStatus(token, "");
 
                 var watchButton = document.querySelector("#WatchButton");
@@ -649,11 +685,23 @@ state and the user re-selects/re-clicks Assistir, which is safe and idempotent s
                 document.querySelector("#WatchButton").disabled = !enabled;
             }
 
+            // Same selectionToken guard as setStatus/setWatchButtonEnabled - not a new token, just another small
+            // helper reusing the existing one. Visible only while the Watch lifecycle is actively doing work;
+            // every terminal state (including generic failures) turns it off alongside re-enabling Assistir.
+            function setActivity(token, active) {
+                if (token !== selectionToken) {
+                    return;
+                }
+
+                document.querySelector("#MovieDetailActivity").hidden = !active;
+            }
+
             // ---- Watch flow (UI-3b) -----------------------------------------------------------------------------
 
             function startWatch(movie, token) {
                 setWatchButtonEnabled(token, false);
                 setStatus(token, FRIENDLY_STATUS.Pending);
+                setActivity(token, true);
 
                 fetchJson("POST", "StrmManager/Movies/Watch/" + encodeURIComponent(movie.externalId)).then(function (result) {
                     if (token !== selectionToken) {
@@ -667,11 +715,13 @@ state and the user re-selects/re-clicks Assistir, which is safe and idempotent s
 
                     if (!result.ok && result.status === 429) {
                         setStatus(token, BUSY_MESSAGE);
+                        setActivity(token, false);
                         setWatchButtonEnabled(token, true);
                         return;
                     }
 
                     setStatus(token, GENERIC_FAILURE_MESSAGE);
+                    setActivity(token, false);
                     setWatchButtonEnabled(token, true);
                 });
             }
@@ -696,6 +746,7 @@ state and the user re-selects/re-clicks Assistir, which is safe and idempotent s
                 }
 
                 // Scheduled, Unavailable, Error, or anything unrecognized: terminal for this attempt - no retry.
+                setActivity(token, false);
                 setWatchButtonEnabled(token, true);
             }
 
@@ -715,6 +766,7 @@ state and the user re-selects/re-clicks Assistir, which is safe and idempotent s
                     }
 
                     setStatus(token, GENERIC_FAILURE_MESSAGE);
+                    setActivity(token, false);
                     setWatchButtonEnabled(token, true);
                 });
             }
@@ -722,6 +774,11 @@ state and the user re-selects/re-clicks Assistir, which is safe and idempotent s
             // ---- Completed -> library scan + item handoff (UI-3b) ------------------------------------------------
 
             function beginLibraryHandoff(movie, token) {
+                // UI-7a: from here on the app is just "opening the movie" from the user's perspective - the friendly
+                // status text changes accordingly, but the underlying scan/poll/navigate sequence below is
+                // completely unchanged. The activity indicator was already on since startWatch and stays on.
+                setStatus(token, HANDOFF_MESSAGE);
+
                 // Scan happens exactly once per Completed watch attempt - never retried, whether it succeeds or not.
                 fetchJson("POST", "StrmManager/Libraries/Scan").then(function (result) {
                     if (token !== selectionToken) {
@@ -734,6 +791,7 @@ state and the user re-selects/re-clicks Assistir, which is safe and idempotent s
                     }
 
                     setStatus(token, GENERIC_FAILURE_MESSAGE);
+                    setActivity(token, false);
                     setWatchButtonEnabled(token, true);
                 });
             }
@@ -761,6 +819,7 @@ state and the user re-selects/re-clicks Assistir, which is safe and idempotent s
 
                     // 400/409 (ambiguous/invalid) or anything else unexpected: terminal, same generic message.
                     setStatus(token, GENERIC_FAILURE_MESSAGE);
+                    setActivity(token, false);
                     setWatchButtonEnabled(token, true);
                 });
             }
@@ -768,6 +827,7 @@ state and the user re-selects/re-clicks Assistir, which is safe and idempotent s
             function continueOrGiveUpLibraryPoll(movie, token, startedAt) {
                 if (Date.now() - startedAt >= LIBRARY_POLL_WINDOW_MS) {
                     setStatus(token, NOT_YET_IN_LIBRARY_MESSAGE);
+                    setActivity(token, false);
                     setWatchButtonEnabled(token, true);
                     return;
                 }
