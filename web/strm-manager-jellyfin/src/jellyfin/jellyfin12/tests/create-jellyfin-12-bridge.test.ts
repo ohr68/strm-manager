@@ -13,6 +13,11 @@ describe('createJellyfin12Bridge', () => {
                     Version: '12.1.0',
                     ProductName: 'Jellyfin Server',
                 }),
+                serverInfo() {
+                    return {
+                        Id: 'server-1',
+                    };
+                },
             },
             Dashboard: {
                 navigate,
@@ -51,6 +56,11 @@ describe('createJellyfin12Bridge', () => {
                 getSystemInfo: async () => ({
                     Version: '12.1.0',
                 }),
+                serverInfo() {
+                    return {
+                        Id: 'server-1',
+                    };
+                },
             },
         });
 
@@ -67,6 +77,11 @@ describe('createJellyfin12Bridge', () => {
                 getSystemInfo: async () => ({
                     Version: '12.1.0',
                 }),
+                serverInfo() {
+                    return {
+                        Id: 'server-1',
+                    };
+                },
             },
         });
 
@@ -90,26 +105,59 @@ describe('createJellyfin12Bridge', () => {
             ApiClient: {
                 getCurrentUserId: () => 'user-1',
                 getSystemInfo: async () => ({}),
+                serverInfo() {
+                    return {
+                        Id: 'server-1',
+                    };
+                },
             },
         }))
             .rejects
             .toThrow('Jellyfin server version is not available.');
     });
 
-    it('does not claim unsupported item navigation', async () => {
+    it('rejects item navigation when the server ID is unavailable', async () => {
         const bridge = await createJellyfin12Bridge({
             ApiClient: {
                 getCurrentUserId: () => 'user-1',
                 getSystemInfo: async () => ({
                     Version: '12.1.0',
                 }),
+                serverInfo: () => ({}),
+            },
+            Dashboard: {
+                navigate: vi.fn(),
             },
         });
 
         await expect(
-            bridge.navigation.openItem({ id: 'item-1' }),
+            bridge.navigation.openItem({
+                id: 'movie-1',
+            }),
         ).rejects.toThrow(
-            'Jellyfin item navigation is not implemented.',
+            'Jellyfin server ID is not available.',
+        );
+    });
+
+    it('rejects item navigation when Jellyfin navigation is unavailable', async () => {
+        const bridge = await createJellyfin12Bridge({
+            ApiClient: {
+                getCurrentUserId: () => 'user-1',
+                getSystemInfo: async () => ({
+                    Version: '12.1.0',
+                }),
+                serverInfo: () => ({
+                    Id: 'server-1',
+                }),
+            },
+        });
+
+        await expect(
+            bridge.navigation.openItem({
+                id: 'movie-1',
+            }),
+        ).rejects.toThrow(
+            'Jellyfin navigation is not available.',
         );
     });
 
@@ -120,6 +168,11 @@ describe('createJellyfin12Bridge', () => {
               getSystemInfo: async () => ({
                   Version: '13.0.0',
               }),
+              serverInfo() {
+                return {
+                    Id: 'server-1',
+                };
+              },
           },
       }))
           .rejects
@@ -127,4 +180,60 @@ describe('createJellyfin12Bridge', () => {
               'Unsupported Jellyfin major version for Jellyfin 12 adapter: 13.0.0',
           );
     });
+
+    it('navigates to the native Jellyfin item details route', async () => {
+        const navigate = vi.fn();
+
+        const bridge = await createJellyfin12Bridge({
+            ApiClient: {
+                getCurrentUserId: () => 'user-1',
+                getSystemInfo: async () => ({
+                    Version: '12.1.0',
+                }),
+                serverInfo: () => ({
+                    Id: 'server-1',
+                }),
+            },
+            Dashboard: {
+                navigate,
+            },
+        });
+
+        await bridge.navigation.openItem({
+            id: 'movie-1',
+        });
+
+        expect(navigate).toHaveBeenCalledOnce();
+        expect(navigate).toHaveBeenCalledWith(
+            '#/details?id=movie-1&serverId=server-1',
+        );
+    });
+
+    it('encodes item and server IDs in the details route', async () => {
+        const navigate = vi.fn();
+
+        const bridge = await createJellyfin12Bridge({
+            ApiClient: {
+                getCurrentUserId: () => 'user-1',
+                getSystemInfo: async () => ({
+                    Version: '12.1.0',
+                }),
+                serverInfo: () => ({
+                    Id: 'server/id & 1',
+                }),
+            },
+            Dashboard: {
+                navigate,
+            },
+        });
+
+        await bridge.navigation.openItem({
+            id: 'movie/id & 1',
+        });
+
+        expect(navigate).toHaveBeenCalledWith(
+            '#/details?id=movie%2Fid%20%26%201&serverId=server%2Fid%20%26%201',
+        );
+    });
+
 });

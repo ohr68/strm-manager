@@ -54,12 +54,28 @@ export async function createJellyfin12Bridge(
         },
 
         navigation: {
-            async openItem(_item: JellyfinItemRef): Promise<void> {
-                throw new Error(
-                    'Jellyfin item navigation is not implemented.',
+            async openItem(item: JellyfinItemRef): Promise<void> {
+                if (typeof dashboard?.navigate !== 'function') {
+                    throw new Error(
+                        'Jellyfin navigation is not available.',
+                    );
+                }
+
+                const serverId = apiClient.serverInfo()?.Id;
+
+                if (!serverId) {
+                    throw new Error(
+                        'Jellyfin server ID is not available.',
+                    );
+                }
+
+                const itemId = encodeURIComponent(item.id);
+                const encodedServerId = encodeURIComponent(serverId);
+
+                dashboard.navigate(
+                    `#/details?id=${itemId}&serverId=${encodedServerId}`,
                 );
             },
-
             async openHome(): Promise<void> {
                 if (!dashboard) {
                     throw new Error(

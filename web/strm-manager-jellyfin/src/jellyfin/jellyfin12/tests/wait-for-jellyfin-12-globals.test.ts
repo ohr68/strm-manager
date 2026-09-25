@@ -9,6 +9,9 @@ describe('waitForJellyfin12Globals', () => {
                 getSystemInfo: async () => ({
                     Version: '12.1.0',
                 }),
+                serverInfo: () => ({
+                    Id: 'server-1',
+                }),
             },
         };
 
@@ -32,6 +35,9 @@ describe('waitForJellyfin12Globals', () => {
                             getCurrentUserId: () => 'user-1',
                             getSystemInfo: async () => ({
                                 Version: '12.1.0',
+                            }),
+                            serverInfo: () => ({
+                                Id: 'server-1',
                             }),
                         },
                     }

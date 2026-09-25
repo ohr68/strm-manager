@@ -3,9 +3,14 @@ export interface Jellyfin12SystemInfo {
     readonly ProductName?: string;
 }
 
+export interface Jellyfin12ServerInfo {
+    readonly Id?: string;
+}
+
 export interface Jellyfin12ApiClient {
     getCurrentUserId(): string | null;
     getSystemInfo(): Promise<Jellyfin12SystemInfo>;
+    serverInfo(): Jellyfin12ServerInfo;
 }
 
 export interface Jellyfin12Dashboard {
