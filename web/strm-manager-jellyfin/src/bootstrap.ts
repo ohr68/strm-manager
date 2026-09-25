@@ -1,4 +1,4 @@
-import { inspectJellyfinEnvironment } from './jellyfin/capabilities/inspectJellyfinEnvironment';
+import { inspectJellyfinEnvironment } from './jellyfin/capabilities/inspect-jellyfin-environment';
 
 const LOG_PREFIX = '[STRM Manager]';
 
