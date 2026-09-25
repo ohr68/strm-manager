@@ -58,7 +58,7 @@ function renderHomeRowItem(
     const card = document.createElement('div');
 
     card.className =
-        'card overflowBackdropCard card-hoverable';
+        'card overflowPortraitCard card-hoverable';
 
     const cardBox = document.createElement('div');
 
@@ -68,6 +68,13 @@ function renderHomeRowItem(
     const scalable = document.createElement('div');
 
     scalable.className = 'cardScalable';
+
+    const padder = document.createElement('div');
+
+    padder.className =
+        'cardPadder cardPadder-overflowPortrait';
+
+    scalable.appendChild(padder);
 
     const title = document.createElement('div');
 

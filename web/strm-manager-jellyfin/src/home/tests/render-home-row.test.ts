@@ -128,11 +128,17 @@ describe('renderHomeRow', () => {
         const cardBox = getChild(card, 0);
 
         expect(card.className).toBe(
-            'card overflowBackdropCard card-hoverable',
+            'card overflowPortraitCard card-hoverable',
         );
 
-        expect(getChild(cardBox, 0).className).toBe(
+        const scalable = getChild(cardBox, 0);
+
+        expect(scalable.className).toBe(
             'cardScalable',
+        );
+
+        expect(getChild(scalable, 0).className).toBe(
+            'cardPadder cardPadder-overflowPortrait',
         );
 
         const title = getChild(cardBox, 1);
