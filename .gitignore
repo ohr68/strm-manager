@@ -55,3 +55,7 @@ strm-manager-*.tar
 phase6-key-files.txt
 
 ## Phase artifacts
+
+## JavaScript / TypeScript
+node_modules/
+dist/
