@@ -1,8 +1,7 @@
 import { inspectJellyfinEnvironment } from './jellyfin/capabilities/inspect-jellyfin-environment';
 import { createJellyfin12Bridge } from './jellyfin/jellyfin12/create-jellyfin-12-bridge';
-import { mountJellyfin12HomeIntegration } from './jellyfin/jellyfin12/mount-jellyfin-12-home-integration';
+import { startJellyfin12HomeIntegration } from './jellyfin/jellyfin12/start-jellyfin-12-home-integration';
 import { waitForJellyfin12Globals } from './jellyfin/jellyfin12/wait-for-jellyfin-12-globals';
-import { waitForJellyfin12HomeHost } from './jellyfin/jellyfin12/wait-for-jellyfin-12-home-host';
 
 const LOG_PREFIX = '[STRM Manager]';
 
@@ -30,19 +29,20 @@ async function bootstrap(): Promise<void> {
             },
         );
 
-        const homeHost =
-        await waitForJellyfin12HomeHost();
-
-        if (!homeHost) {
-            console.info(
-                `${LOG_PREFIX} Jellyfin home integration unavailable.`,
-            );
-
-            return;
-        }
-
         const homeIntegration =
-            mountJellyfin12HomeIntegration();
+        startJellyfin12HomeIntegration(
+            (root) => {
+                const marker = document.createElement('div');
+
+                marker.textContent = 'STRM Manager';
+                marker.setAttribute(
+                    'data-strm-manager-smoke',
+                    'home',
+                );
+
+                root.appendChild(marker);
+            },
+        );
 
         if (!homeIntegration) {
             console.info(
@@ -52,19 +52,8 @@ async function bootstrap(): Promise<void> {
             return;
         }
 
-        const marker =
-            document.createElement('div');
-
-        marker.textContent = 'STRM Manager';
-        marker.setAttribute(
-            'data-strm-manager-smoke',
-            'home',
-        );
-
-        homeIntegration.root.appendChild(marker);
-
         console.info(
-            `${LOG_PREFIX} Jellyfin home integration mounted.`,
+            `${LOG_PREFIX} Jellyfin home integration started.`,
         );
     } catch (error) {
         console.error(
