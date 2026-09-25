@@ -24,6 +24,13 @@ export async function createJellyfin12Bridge(
     }
 
     const version = parseJellyfinVersion(systemInfo.Version);
+
+    if (version.major !== 12) {
+        throw new Error(
+            `Unsupported Jellyfin major version for Jellyfin 12 adapter: ${version.raw}`,
+        );
+    }
+
     const dashboard = globals.Dashboard;
 
     return {

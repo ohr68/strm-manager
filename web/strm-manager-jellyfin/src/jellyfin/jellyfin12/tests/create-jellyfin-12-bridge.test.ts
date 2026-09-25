@@ -91,4 +91,19 @@ describe('createJellyfin12Bridge', () => {
             'Jellyfin item navigation is not implemented.',
         );
     });
+
+    it('rejects a Jellyfin version outside major 12', async () => {
+      await expect(createJellyfin12Bridge({
+          ApiClient: {
+              getCurrentUserId: () => 'user-1',
+              getSystemInfo: async () => ({
+                  Version: '13.0.0',
+              }),
+          },
+      }))
+          .rejects
+          .toThrow(
+              'Unsupported Jellyfin major version for Jellyfin 12 adapter: 13.0.0',
+          );
+    });
 });
