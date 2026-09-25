@@ -37,8 +37,6 @@ export async function createJellyfin12Bridge(
         version,
 
         capabilities: {
-            authenticatedUser:
-                apiClient.getCurrentUserId() !== null,
             navigation:
                 typeof dashboard?.navigate === 'function',
             itemDetails: false,
@@ -49,6 +47,9 @@ export async function createJellyfin12Bridge(
         auth: {
             getCurrentUserId(): string | null {
                 return apiClient.getCurrentUserId();
+            },
+            isAuthenticated(): boolean {
+                return apiClient.getCurrentUserId() !== null;
             },
         },
 

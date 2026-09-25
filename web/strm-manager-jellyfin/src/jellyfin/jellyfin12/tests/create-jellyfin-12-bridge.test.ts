@@ -29,9 +29,9 @@ describe('createJellyfin12Bridge', () => {
         });
 
         expect(bridge.auth.getCurrentUserId()).toBe('user-1');
+        expect(bridge.auth.isAuthenticated()).toBe(true);
 
         expect(bridge.capabilities).toEqual({
-            authenticatedUser: true,
             navigation: true,
             itemDetails: false,
             playback: false,
@@ -54,8 +54,29 @@ describe('createJellyfin12Bridge', () => {
             },
         });
 
-        expect(bridge.capabilities.authenticatedUser).toBe(false);
-        expect(bridge.capabilities.navigation).toBe(false);
+        expect(bridge.auth.getCurrentUserId()).toBeNull();
+        expect(bridge.auth.isAuthenticated()).toBe(false);
+    });
+
+    it('reads authentication state dynamically after bridge creation', async () => {
+        let currentUserId: string | null = null;
+
+        const bridge = await createJellyfin12Bridge({
+            ApiClient: {
+                getCurrentUserId: () => currentUserId,
+                getSystemInfo: async () => ({
+                    Version: '12.1.0',
+                }),
+            },
+        });
+
+        expect(bridge.auth.getCurrentUserId()).toBeNull();
+        expect(bridge.auth.isAuthenticated()).toBe(false);
+
+        currentUserId = 'user-1';
+
+        expect(bridge.auth.getCurrentUserId()).toBe('user-1');
+        expect(bridge.auth.isAuthenticated()).toBe(true);
     });
 
     it('fails when ApiClient is unavailable', async () => {

@@ -6,7 +6,6 @@ export interface JellyfinVersion {
 }
 
 export interface JellyfinCapabilities {
-    readonly authenticatedUser: boolean;
     readonly navigation: boolean;
     readonly itemDetails: boolean;
     readonly playback: boolean;
@@ -19,6 +18,7 @@ export interface JellyfinItemRef {
 
 export interface JellyfinAuth {
     getCurrentUserId(): string | null;
+    isAuthenticated(): boolean;
 }
 
 export interface JellyfinNavigation {
