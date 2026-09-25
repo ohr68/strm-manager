@@ -2,6 +2,7 @@ import { inspectJellyfinEnvironment } from './jellyfin/capabilities/inspect-jell
 import { createJellyfin12Bridge } from './jellyfin/jellyfin12/create-jellyfin-12-bridge';
 import { startJellyfin12HomeIntegration } from './jellyfin/jellyfin12/start-jellyfin-12-home-integration';
 import { waitForJellyfin12Globals } from './jellyfin/jellyfin12/wait-for-jellyfin-12-globals';
+import { renderHomeRow } from './home/render-home-row';
 
 const LOG_PREFIX = '[STRM Manager]';
 
@@ -32,15 +33,18 @@ async function bootstrap(): Promise<void> {
         const homeIntegration =
         startJellyfin12HomeIntegration(
             (root) => {
-                const marker = document.createElement('div');
-
-                marker.textContent = 'STRM Manager';
-                marker.setAttribute(
-                    'data-strm-manager-smoke',
-                    'home',
+                renderHomeRow(
+                    root,
+                    {
+                        title: 'STRM Manager',
+                        items: [
+                            {
+                                title: 'Joker',
+                                subtitle: '2019',
+                            },
+                        ],
+                    },
                 );
-
-                root.appendChild(marker);
             },
         );
 
