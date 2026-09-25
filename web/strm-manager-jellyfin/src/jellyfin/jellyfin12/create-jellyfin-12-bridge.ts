@@ -77,9 +77,9 @@ export async function createJellyfin12Bridge(
                 );
             },
             async openHome(): Promise<void> {
-                if (!dashboard) {
+                if (typeof dashboard?.navigate !== 'function') {
                     throw new Error(
-                        'Jellyfin Dashboard navigation is not available.',
+                        'Jellyfin navigation is not available.',
                     );
                 }
 

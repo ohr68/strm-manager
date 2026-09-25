@@ -49,6 +49,26 @@ describe('createJellyfin12Bridge', () => {
         expect(navigate).toHaveBeenCalledWith('#/home');
     });
 
+    it('rejects home navigation when Jellyfin navigation is unavailable', async () => {
+        const bridge = await createJellyfin12Bridge({
+            ApiClient: {
+                getCurrentUserId: () => 'user-1',
+                getSystemInfo: async () => ({
+                    Version: '12.1.0',
+                }),
+                serverInfo: () => ({
+                    Id: 'server-1',
+                }),
+            },
+        });
+
+        await expect(
+            bridge.navigation.openHome(),
+        ).rejects.toThrow(
+            'Jellyfin navigation is not available.',
+        );
+    });
+
     it('reports an anonymous user', async () => {
         const bridge = await createJellyfin12Bridge({
             ApiClient: {
