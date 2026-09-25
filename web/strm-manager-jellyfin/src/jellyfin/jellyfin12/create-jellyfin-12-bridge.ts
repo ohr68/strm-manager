@@ -7,6 +7,7 @@ import {
     type Jellyfin12Globals,
 } from './jellyfin-12-globals';
 import { parseJellyfinVersion } from './parse-jellyfin-version';
+import { resolveJellyfin12PlaybackManager } from './resolve-jellyfin-12-playback-manager';
 
 export async function createJellyfin12Bridge(
     globals: Jellyfin12Globals = getJellyfin12Globals(),
@@ -32,6 +33,7 @@ export async function createJellyfin12Bridge(
     }
 
     const dashboard = globals.Dashboard;
+    const playbackManager = resolveJellyfin12PlaybackManager(globals);
 
     return {
         version,
@@ -40,7 +42,7 @@ export async function createJellyfin12Bridge(
             navigation:
                 typeof dashboard?.navigate === 'function',
             itemDetails: false,
-            playback: false,
+            playback: playbackManager !== null,
             homeIntegration: false,
         },
 
@@ -88,10 +90,26 @@ export async function createJellyfin12Bridge(
         },
 
         playback: {
-            async play(_item: JellyfinItemRef): Promise<void> {
-                throw new Error(
-                    'Jellyfin playback is not implemented.',
-                );
+            async play(item: JellyfinItemRef): Promise<void> {
+                if (!playbackManager) {
+                    throw new Error(
+                        'Jellyfin playback is not available.',
+                    );
+                }
+
+                const serverId = apiClient.serverInfo()?.Id;
+
+                if (!serverId) {
+                    throw new Error(
+                        'Jellyfin server ID is not available.',
+                    );
+                }
+
+                await playbackManager.play({
+                    ids: [item.id],
+                    serverId,
+                    fullscreen: true,
+                });
             },
         },
     };

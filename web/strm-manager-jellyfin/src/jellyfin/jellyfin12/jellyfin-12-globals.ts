@@ -1,3 +1,5 @@
+import type { Jellyfin12WebpackGlobals } from './resolve-jellyfin-12-playback-manager';
+
 export interface Jellyfin12SystemInfo {
     readonly Version?: string;
     readonly ProductName?: string;
@@ -17,7 +19,7 @@ export interface Jellyfin12Dashboard {
     navigate(url: string): void;
 }
 
-export interface Jellyfin12Globals {
+export interface Jellyfin12Globals extends Jellyfin12WebpackGlobals {
     readonly ApiClient?: Jellyfin12ApiClient;
     readonly Dashboard?: Jellyfin12Dashboard;
 }
