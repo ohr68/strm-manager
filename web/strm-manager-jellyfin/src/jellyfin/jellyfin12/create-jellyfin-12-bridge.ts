@@ -1,5 +1,6 @@
 import type {
     JellyfinBridge,
+    JellyfinItem,
     JellyfinItemRef,
 } from '../contracts/jellyfin-bridge';
 import {
@@ -8,6 +9,7 @@ import {
 } from './jellyfin-12-globals';
 import { parseJellyfinVersion } from './parse-jellyfin-version';
 import { resolveJellyfin12PlaybackManager } from './resolve-jellyfin-12-playback-manager';
+
 
 export async function createJellyfin12Bridge(
     globals: Jellyfin12Globals = getJellyfin12Globals(),
@@ -34,6 +36,7 @@ export async function createJellyfin12Bridge(
 
     const dashboard = globals.Dashboard;
     const playbackManager = resolveJellyfin12PlaybackManager(globals);
+    const getItem = apiClient.getItem?.bind(apiClient);
 
     return {
         version,
@@ -41,7 +44,7 @@ export async function createJellyfin12Bridge(
         capabilities: {
             navigation:
                 typeof dashboard?.navigate === 'function',
-            itemDetails: false,
+            itemDetails: getItem !== undefined,
             playback: playbackManager !== null,
             homeIntegration: false,
         },
@@ -86,6 +89,37 @@ export async function createJellyfin12Bridge(
                 }
 
                 dashboard.navigate('#/home');
+            },
+        },
+
+        itemDetails: {
+            async getItem(
+                item: JellyfinItemRef,
+            ): Promise<JellyfinItem> {
+                if (!getItem) {
+                    throw new Error(
+                        'Jellyfin item details are not available.',
+                    );
+                }
+
+                const result = await getItem(
+                    apiClient.getCurrentUserId(),
+                    item.id,
+                );
+
+                if (!result.Id || !result.Name || !result.Type) {
+                    throw new Error(
+                        'Jellyfin item details are incomplete.',
+                    );
+                }
+
+                return {
+                    id: result.Id,
+                    name: result.Name,
+                    type: result.Type,
+                    mediaType: result.MediaType ?? null,
+                    productionYear: result.ProductionYear ?? null,
+                };
             },
         },
 

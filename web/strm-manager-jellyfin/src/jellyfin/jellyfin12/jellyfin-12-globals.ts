@@ -9,9 +9,21 @@ export interface Jellyfin12ServerInfo {
     readonly Id?: string;
 }
 
+export interface Jellyfin12Item {
+    readonly Id?: string;
+    readonly Name?: string;
+    readonly Type?: string;
+    readonly MediaType?: string;
+    readonly ProductionYear?: number;
+}
+
 export interface Jellyfin12ApiClient {
     getCurrentUserId(): string | null;
     getSystemInfo(): Promise<Jellyfin12SystemInfo>;
+    getItem?(
+        userId: string | null,
+        itemId: string,
+    ): Promise<Jellyfin12Item>;
     serverInfo(): Jellyfin12ServerInfo;
 }
 

@@ -16,6 +16,18 @@ export interface JellyfinItemRef {
     readonly id: string;
 }
 
+export interface JellyfinItem {
+    readonly id: string;
+    readonly name: string;
+    readonly type: string;
+    readonly mediaType: string | null;
+    readonly productionYear: number | null;
+}
+
+export interface JellyfinItemDetails {
+    getItem(item: JellyfinItemRef): Promise<JellyfinItem>;
+}
+
 export interface JellyfinAuth {
     getCurrentUserId(): string | null;
     isAuthenticated(): boolean;
@@ -35,5 +47,6 @@ export interface JellyfinBridge {
     readonly capabilities: JellyfinCapabilities;
     readonly auth: JellyfinAuth;
     readonly navigation: JellyfinNavigation;
+    readonly itemDetails: JellyfinItemDetails;
     readonly playback: JellyfinPlayback;
 }

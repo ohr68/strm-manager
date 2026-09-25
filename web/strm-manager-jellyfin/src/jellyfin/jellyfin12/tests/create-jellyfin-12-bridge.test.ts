@@ -256,6 +256,149 @@ describe('createJellyfin12Bridge', () => {
         );
     });
 
+    it('reports item details capability when getItem is available', async () => {
+        const bridge = await createJellyfin12Bridge({
+            ApiClient: {
+                getCurrentUserId: () => 'user-1',
+                getSystemInfo: async () => ({
+                    Version: '12.1.0',
+                }),
+                getItem: async () => ({
+                    Id: 'movie-1',
+                    Name: 'Joker',
+                    Type: 'Movie',
+                }),
+                serverInfo: () => ({
+                    Id: 'server-1',
+                }),
+            },
+        });
+
+        expect(bridge.capabilities.itemDetails).toBe(true);
+    });
+
+    it('gets and normalizes Jellyfin item details', async () => {
+        const getItem = vi.fn().mockResolvedValue({
+            Id: 'movie-1',
+            Name: 'Joker',
+            Type: 'Movie',
+            MediaType: 'Video',
+            ProductionYear: 2019,
+        });
+
+        const bridge = await createJellyfin12Bridge({
+            ApiClient: {
+                getCurrentUserId: () => 'user-1',
+                getSystemInfo: async () => ({
+                    Version: '12.1.0',
+                }),
+                getItem,
+                serverInfo: () => ({
+                    Id: 'server-1',
+                }),
+            },
+        });
+
+        await expect(
+            bridge.itemDetails.getItem({
+                id: 'movie-1',
+            }),
+        ).resolves.toEqual({
+            id: 'movie-1',
+            name: 'Joker',
+            type: 'Movie',
+            mediaType: 'Video',
+            productionYear: 2019,
+        });
+
+        expect(getItem).toHaveBeenCalledOnce();
+        expect(getItem).toHaveBeenCalledWith(
+            'user-1',
+            'movie-1',
+        );
+    });
+
+    it('normalizes optional Jellyfin item details to null', async () => {
+        const bridge = await createJellyfin12Bridge({
+            ApiClient: {
+                getCurrentUserId: () => null,
+                getSystemInfo: async () => ({
+                    Version: '12.1.0',
+                }),
+                getItem: async () => ({
+                    Id: 'movie-1',
+                    Name: 'Joker',
+                    Type: 'Movie',
+                }),
+                serverInfo: () => ({
+                    Id: 'server-1',
+                }),
+            },
+        });
+
+        await expect(
+            bridge.itemDetails.getItem({
+                id: 'movie-1',
+            }),
+        ).resolves.toEqual({
+            id: 'movie-1',
+            name: 'Joker',
+            type: 'Movie',
+            mediaType: null,
+            productionYear: null,
+        });
+    });
+
+    it('rejects incomplete Jellyfin item details', async () => {
+        const bridge = await createJellyfin12Bridge({
+            ApiClient: {
+                getCurrentUserId: () => 'user-1',
+                getSystemInfo: async () => ({
+                    Version: '12.1.0',
+                }),
+                getItem: async () => ({
+                    Id: 'movie-1',
+                    Type: 'Movie',
+                }),
+                serverInfo: () => ({
+                    Id: 'server-1',
+                }),
+            },
+        });
+
+        await expect(
+            bridge.itemDetails.getItem({
+                id: 'movie-1',
+            }),
+        ).rejects.toThrow(
+            'Jellyfin item details are incomplete.',
+        );
+    });
+
+    it('rejects item details when getItem is unavailable', async () => {
+        const bridge = await createJellyfin12Bridge({
+            ApiClient: {
+                getCurrentUserId: () => 'user-1',
+                getSystemInfo: async () => ({
+                    Version: '12.1.0',
+                }),
+                serverInfo: () => ({
+                    Id: 'server-1',
+                }),
+            },
+        });
+
+        expect(bridge.capabilities.itemDetails).toBe(false);
+
+        await expect(
+            bridge.itemDetails.getItem({
+                id: 'movie-1',
+            }),
+        ).rejects.toThrow(
+            'Jellyfin item details are not available.',
+        );
+    });
+
     it('reports playback capability when the native playback manager is available', async () => {
         const play = vi.fn();
 
