@@ -14,6 +14,10 @@ import {
     type MovieWatchFlowClock,
 } from '../movie-watch-flow';
 
+import {
+    MovieWatchError,
+} from '../movie-watch-error';
+
 import type {
     MovieWatchApi,
 } from '../movie-watch-api';
@@ -86,6 +90,33 @@ function createAdvancingClock(): {
 }
 
 describe('MovieWatchFlow', () => {
+    it(
+        'exposes typed movie watch errors',
+        () => {
+            const error =
+                new MovieWatchError(
+                    'preparation-failed',
+                    'Preparation failed.',
+                );
+
+            expect(error)
+                .toBeInstanceOf(Error);
+
+            expect(error.name)
+                .toBe('MovieWatchError');
+
+            expect(error.code)
+                .toBe(
+                    'preparation-failed',
+                );
+
+            expect(error.message)
+                .toBe(
+                    'Preparation failed.',
+                );
+        },
+    );
+
     it(
         'returns an existing Jellyfin item without scanning',
         async () => {
@@ -421,9 +452,14 @@ describe('MovieWatchFlow', () => {
 
             await expect(
                 flow.prepare(IMDB_ID),
-            ).rejects.toThrow(
-                'Movie preparation ended with status Unavailable.',
-            );
+            ).rejects.toMatchObject({
+                name:
+                    'MovieWatchError',
+                code:
+                    'preparation-failed',
+                message:
+                    'Movie preparation ended with status Unavailable.',
+            });
 
             expect(
                 watchApi.getMovie,
@@ -469,9 +505,14 @@ describe('MovieWatchFlow', () => {
 
             await expect(
                 flow.prepare(IMDB_ID),
-            ).rejects.toThrow(
-                'Jellyfin movie did not become ready in time.',
-            );
+            ).rejects.toMatchObject({
+                name:
+                    'MovieWatchError',
+                code:
+                    'library-timeout',
+                message:
+                    'Jellyfin movie did not become ready in time.',
+            });
 
             expect(
                 libraryApi.scan,

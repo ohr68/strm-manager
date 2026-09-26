@@ -12,7 +12,9 @@ import { createHomeController } from './home/home-controller';
 import { createJellyfinLibraryApi } from './watch/jellyfin-library-api';
 import { createMovieWatchFlow } from './watch/movie-watch-flow';
 import { createMovieWatchApi } from './watch/movie-watch-api';
-
+import { createHomeFeedback } from './home/home-feedback';
+import { MovieWatchError } from './watch/movie-watch-error';
+import './styles/strm-manager.css';
 
 const LOG_PREFIX = '[STRM Manager]';
 
@@ -82,18 +84,23 @@ async function bootstrap(): Promise<void> {
             createHomeView(
                 nativeRowComponents,
             );
+        
+        const homeFeedback =
+            createHomeFeedback();
 
         const homeController =
             createHomeController(
                 catalogApi,
                 homeView,
-                async (movie) => {
+                async (movie, interaction) => {
                     if (!movie.id) {
                         console.error(
                             `${LOG_PREFIX} Cannot watch movie without an external id.`,
                         );
                         return;
                     }
+
+                    interaction.setPreparing(true);
 
                     try {
                         const itemId =
@@ -105,6 +112,31 @@ async function bootstrap(): Promise<void> {
                             id: itemId,
                         });
                     } catch (error) {
+                        interaction.setPreparing(false);
+
+                        if (
+                            error instanceof
+                            MovieWatchError
+                        ) {
+                            switch (error.code) {
+                                case 'preparation-failed':
+                                    homeFeedback.show(
+                                        'Este filme não está disponível no momento.',
+                                    );
+                                    break;
+
+                                case 'library-timeout':
+                                    homeFeedback.show(
+                                        'O filme foi preparado, mas demorou para aparecer no Jellyfin. Tente novamente.',
+                                    );
+                                    break;
+                            }
+                        } else {
+                            homeFeedback.show(
+                                'Não foi possível preparar o filme. Tente novamente em instantes.',
+                            );
+                        }
+
                         console.error(
                             `${LOG_PREFIX} Failed to prepare movie for playback.`,
                             error,

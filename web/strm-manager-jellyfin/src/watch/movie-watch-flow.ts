@@ -1,7 +1,9 @@
 import type {
     MovieWatchApi,
 } from './movie-watch-api';
-
+import {
+    MovieWatchError,
+} from './movie-watch-error';
 import type {
     JellyfinLibraryApi,
 } from './jellyfin-library-api';
@@ -72,7 +74,8 @@ export function createMovieWatchFlow(
             }
 
             if (status !== 'Completed') {
-                throw new Error(
+                throw new MovieWatchError(
+                    'preparation-failed',
                     `Movie preparation ended with status ${status}.`,
                 );
             }
@@ -153,7 +156,8 @@ async function waitForStableJellyfinItem(
         );
     }
 
-    throw new Error(
+    throw new MovieWatchError(
+        'library-timeout',
         'Jellyfin movie did not become ready in time.',
     );
 }

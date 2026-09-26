@@ -7,6 +7,7 @@ import {
 } from '../catalog/catalog-mapper';
 
 import type {
+    MediaCardInteraction,
     MediaCardModel,
 } from './components/media-card';
 
@@ -16,6 +17,7 @@ import type {
 
 export type MovieSelectionHandler = (
     movie: MediaCardModel,
+    interaction: MediaCardInteraction,
 ) => void | Promise<void>;
 
 export interface HomeController {
@@ -31,6 +33,8 @@ export function createHomeController(
         async load(
             root: HTMLElement,
         ): Promise<void> {
+            homeView.renderLoading(root);
+
             const response =
                 await catalogApi.getMovieRows();
 
@@ -42,9 +46,10 @@ export function createHomeController(
             homeView.render(
                 root,
                 rows,
-                movie => {
+                (movie, interaction) => {
                     void onMovieSelected?.(
                         movie,
+                        interaction,
                     );
                 },
             );

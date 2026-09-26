@@ -5,9 +5,17 @@ export interface MediaCardModel {
     readonly imageUrl?: string;
 }
 
+export interface MediaCardInteraction {
+    setPreparing(preparing: boolean): void;
+}
+
 export type MediaCardSelectHandler = (
     item: MediaCardModel,
+    interaction: MediaCardInteraction,
 ) => void;
+
+const PREPARING_CLASS =
+    'strm-manager-card--preparing';
 
 export function createMediaCard(
     item: MediaCardModel,
@@ -35,27 +43,39 @@ export function createMediaCard(
     scalable.appendChild(padder);
 
     if (item.imageUrl) {
-        const image = document.createElement('div');
+        const image =
+            document.createElement('div');
 
         image.className =
             'cardImageContainer coveredImage cardContent';
 
-        image.setAttribute('role', 'img');
-        image.setAttribute('aria-label', item.title);
+        image.setAttribute(
+            'role',
+            'img',
+        );
+
+        image.setAttribute(
+            'aria-label',
+            item.title,
+        );
+
         image.style.backgroundImage =
             `url("${item.imageUrl}")`;
 
         scalable.appendChild(image);
     }
 
-    const overlay = document.createElement('div');
+    const overlay =
+        document.createElement('div');
 
     overlay.className =
         'cardOverlayContainer';
 
-    const playButton = document.createElement('button');
+    const playButton =
+        document.createElement('button');
 
     playButton.type = 'button';
+
     playButton.className =
         'cardOverlayButton ' +
         'cardOverlayButton-hover ' +
@@ -67,27 +87,46 @@ export function createMediaCard(
         `Preparar ${item.title}`,
     );
 
-    const playIcon = document.createElement('span');
+    const playIcon =
+        document.createElement('span');
 
     playIcon.className =
         'material-icons ' +
         'cardOverlayButtonIcon ' +
-        'cardOverlayButtonIcon-hover ' +
-        'play_arrow';
+        'cardOverlayButtonIcon-hover';
+
+    playIcon.textContent = 'play_arrow';
 
     playIcon.setAttribute(
         'aria-hidden',
         'true',
     );
 
-    playButton.appendChild(playIcon);
+    const spinner =
+        document.createElement('span');
+
+    spinner.className =
+        'strm-manager-card-spinner';
+
+    spinner.setAttribute(
+        'aria-hidden',
+        'true',
+    );
+
+    playButton.append(
+        playIcon,
+        spinner,
+    );
+
     overlay.appendChild(playButton);
     scalable.appendChild(overlay);
 
-    const title = document.createElement('div');
+    const title =
+        document.createElement('div');
 
     title.className =
         'cardText cardTextCentered cardText-first';
+
     title.textContent = item.title;
 
     cardBox.append(
@@ -96,21 +135,70 @@ export function createMediaCard(
     );
 
     if (item.subtitle) {
-        const subtitle = document.createElement('div');
+        const subtitle =
+            document.createElement('div');
 
         subtitle.className =
-            'cardText cardTextCentered cardText-secondary';
-        subtitle.textContent = item.subtitle;
+            'cardText ' +
+            'cardTextCentered ' +
+            'cardText-secondary';
+
+        subtitle.textContent =
+            item.subtitle;
 
         cardBox.appendChild(subtitle);
     }
 
     card.appendChild(cardBox);
 
+    let preparing = false;
+
+    const setPreparing = (
+        nextPreparing: boolean,
+    ): void => {
+        preparing = nextPreparing;
+
+        card.setAttribute(
+            'aria-busy',
+            preparing ? 'true' : 'false',
+        );
+
+        playButton.disabled = preparing;
+
+        if (preparing) {
+            card.classList.add(
+                PREPARING_CLASS,
+            );
+        } else {
+            card.classList.remove(
+                PREPARING_CLASS,
+            );
+        }
+
+        playButton.setAttribute(
+            'aria-label',
+            preparing
+                ? `Preparando ${item.title}`
+                : `Preparar ${item.title}`,
+        );
+    };
+
     if (onSelect) {
-        card.addEventListener('click', () => {
-            onSelect(item);
-        });
+        card.addEventListener(
+            'click',
+            () => {
+                if (preparing) {
+                    return;
+                }
+
+                onSelect(
+                    item,
+                    {
+                        setPreparing,
+                    },
+                );
+            },
+        );
     }
 
     return card;

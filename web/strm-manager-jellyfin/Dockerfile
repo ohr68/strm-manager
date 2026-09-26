@@ -24,10 +24,16 @@ COPY --from=web-build \
     /src/dist/strm-manager.js \
     /jellyfin/jellyfin-web/strm-manager/strm-manager.js
 
+COPY --from=web-build \
+    /src/dist/strm-manager-jellyfin.css \
+    /jellyfin/jellyfin-web/strm-manager/strm-manager-jellyfin.css
+
 COPY docker/patch-jellyfin-web.pl \
     /tmp/patch-jellyfin-web.pl
 
 RUN perl /tmp/patch-jellyfin-web.pl \
     && test -f /jellyfin/jellyfin-web/strm-manager/strm-manager.js \
+    && test -f /jellyfin/jellyfin-web/strm-manager/strm-manager-jellyfin.css \
     && test "$(grep -o 'strm-manager.js' /jellyfin/jellyfin-web/index.html | wc -l)" -eq 1 \
+    && test "$(grep -o 'strm-manager-jellyfin.css' /jellyfin/jellyfin-web/index.html | wc -l)" -eq 1 \
     && rm /tmp/patch-jellyfin-web.pl

@@ -1,18 +1,64 @@
-import type { NativeRowComponents } from "../native-row-components";
+import type {
+    NativeRowComponents,
+} from '../native-row-components';
 
 export class ElementMock {
     className = '';
     textContent: string | null = null;
+    disabled = false;
+    hidden = false;
+
     readonly children: ElementMock[] = [];
     readonly attributes = new Map<string, string>();
+
     readonly style = {
         backgroundImage: '',
+    };
+
+    readonly classList = {
+        add: (...tokens: string[]): void => {
+            const classes =
+                this.getClassNames();
+
+            for (const token of tokens) {
+                classes.add(token);
+            }
+
+            this.className =
+                Array.from(classes).join(' ');
+        },
+
+        remove: (...tokens: string[]): void => {
+            const classes =
+                this.getClassNames();
+
+            for (const token of tokens) {
+                classes.delete(token);
+            }
+
+            this.className =
+                Array.from(classes).join(' ');
+        },
+
+        contains: (token: string): boolean => {
+            return this
+                .getClassNames()
+                .has(token);
+        },
     };
 
     private readonly listeners = new Map<
         string,
         Array<() => void>
     >();
+
+    private getClassNames(): Set<string> {
+        return new Set(
+            this.className
+                .split(/\s+/)
+                .filter(Boolean),
+        );
+    }
 
     setAttribute(
         name: string,
@@ -29,7 +75,10 @@ export class ElementMock {
             this.listeners.get(type) ?? [];
 
         listeners.push(listener);
-        this.listeners.set(type, listeners);
+        this.listeners.set(
+            type,
+            listeners,
+        );
     }
 
     click(): void {
@@ -41,16 +90,23 @@ export class ElementMock {
         }
     }
 
-    append(...children: ElementMock[]): void {
+    append(
+        ...children: ElementMock[]
+    ): void {
         this.children.push(...children);
     }
 
-    appendChild(child: ElementMock): ElementMock {
+    appendChild(
+        child: ElementMock,
+    ): ElementMock {
         this.children.push(child);
+
         return child;
     }
 
-    replaceChildren(...children: ElementMock[]): void {
+    replaceChildren(
+        ...children: ElementMock[]
+    ): void {
         this.children.length = 0;
         this.children.push(...children);
     }
@@ -79,7 +135,8 @@ export function getChild(
     element: ElementMock,
     index: number,
 ): ElementMock {
-    const child = element.children[index];
+    const child =
+        element.children[index];
 
     if (!child) {
         throw new Error(
