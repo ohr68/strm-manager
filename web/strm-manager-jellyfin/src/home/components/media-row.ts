@@ -1,3 +1,4 @@
+import type { NativeRowComponents } from '../native-row-components';
 import {
     createMediaCard,
     type MediaCardModel,
@@ -12,6 +13,7 @@ export interface MediaRowModel {
 
 export function createMediaRow(
     row: MediaRowModel,
+    nativeComponents: NativeRowComponents,
     onSelect?: MediaCardSelectHandler,
 ): HTMLElement {
     const section = document.createElement('div');
@@ -25,14 +27,23 @@ export function createMediaRow(
         'sectionTitle sectionTitle-cards padded-left';
     heading.textContent = row.title;
 
-    const scroller = document.createElement('div');
+    const scroller = nativeComponents.createScroller();
+
+    scroller.setAttribute('is', 'emby-scroller');
+    scroller.setAttribute('data-centerfocus', 'true');
+    scroller.setAttribute('data-scroll-mode-x', 'custom');
 
     scroller.className =
         'padded-top-focusscale ' +
         'padded-bottom-focusscale ' +
         'emby-scroller';
 
-    const itemsContainer = document.createElement('div');
+    const itemsContainer = nativeComponents.createItemsContainer();
+
+    itemsContainer.setAttribute(
+        'is',
+        'emby-itemscontainer',
+    );
 
     itemsContainer.className =
         'itemsContainer scrollSlider ' +

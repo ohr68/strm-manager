@@ -3,6 +3,7 @@ import {
     createMediaRow,
     type MediaRowModel,
 } from './components/media-row';
+import type { NativeRowComponents } from './native-row-components';
 
 export interface HomeView {
     render(
@@ -12,12 +13,18 @@ export interface HomeView {
     ): void;
 }
 
-export function createHomeView(): HomeView {
+export function createHomeView(
+    nativeComponents: NativeRowComponents,
+): HomeView {
     return {
         render(root, rows, onSelect): void {
             root.replaceChildren(
                 ...rows.map((row) =>
-                    createMediaRow(row, onSelect),
+                    createMediaRow(
+                        row,
+                        nativeComponents,
+                        onSelect
+                    ),
                 ),
             );
         }

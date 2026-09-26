@@ -8,6 +8,7 @@ import {
 import { createMediaRow } from '../media-row';
 import {
     createDocumentMock,
+    createNativeRowComponentsMock,
     ElementMock,
     getChild,
 } from '../../tests/dom-test-utils';
@@ -25,6 +26,7 @@ describe('createMediaRow', () => {
     });
 
     it('renders native-style Jellyfin row structure', () => {
+        const nativeComponents = createNativeRowComponentsMock();
         const section = createMediaRow({
             title: 'STRM Manager',
             items: [
@@ -33,7 +35,7 @@ describe('createMediaRow', () => {
                     subtitle: '2019',
                 },
             ],
-        }) as unknown as ElementMock;
+        }, nativeComponents) as unknown as ElementMock;
 
         expect(section.className).toBe(
             'verticalSection emby-scroller-container',

@@ -1,3 +1,5 @@
+import type { NativeRowComponents } from "../native-row-components";
+
 export class ElementMock {
     className = '';
     textContent: string | null = null;
@@ -52,6 +54,17 @@ export class ElementMock {
         this.children.length = 0;
         this.children.push(...children);
     }
+}
+
+export function createNativeRowComponentsMock():
+    NativeRowComponents {
+    return {
+        createScroller: () =>
+            new ElementMock() as unknown as HTMLElement,
+
+        createItemsContainer: () =>
+            new ElementMock() as unknown as HTMLElement,
+    };
 }
 
 export function createDocumentMock():

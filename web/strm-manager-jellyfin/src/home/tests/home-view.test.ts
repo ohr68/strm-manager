@@ -8,6 +8,7 @@ import {
 import { createHomeView } from '../home-view';
 import {
     createDocumentMock,
+    createNativeRowComponentsMock,
     ElementMock,
     getChild,
 } from './dom-test-utils';
@@ -26,7 +27,8 @@ describe('createHomeView', () => {
 
     it('renders multiple rows', () => {
         const root = new ElementMock();
-        const view = createHomeView();
+        const nativeComponents = createNativeRowComponentsMock();
+        const view = createHomeView(nativeComponents);
 
         view.render(
             root as unknown as HTMLElement,
@@ -58,7 +60,9 @@ describe('createHomeView', () => {
 
         root.appendChild(new ElementMock());
 
-        createHomeView().render(
+        const nativeComponents = createNativeRowComponentsMock();
+
+        createHomeView(nativeComponents).render(
             root as unknown as HTMLElement,
             [
                 {

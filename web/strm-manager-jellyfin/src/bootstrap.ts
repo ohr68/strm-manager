@@ -2,6 +2,7 @@ import { inspectJellyfinEnvironment } from './jellyfin/capabilities/inspect-jell
 import { createJellyfin12Bridge } from './jellyfin/jellyfin12/create-jellyfin-12-bridge';
 import { startJellyfin12HomeIntegration } from './jellyfin/jellyfin12/start-jellyfin-12-home-integration';
 import { waitForJellyfin12Globals } from './jellyfin/jellyfin12/wait-for-jellyfin-12-globals';
+import { createJellyfin12RowComponents } from './jellyfin/jellyfin12/jellyfin-12-row-components';
 import { createHomeView } from './home/home-view';
 import { createCatalogApi } from './catalog/catalog-api';
 import { getAppConfig } from './core/config/app-config';
@@ -49,7 +50,8 @@ async function bootstrap(): Promise<void> {
         );
 
         const catalogApi = createCatalogApi(http);
-        const homeView = createHomeView();
+        const nativeRowComponents = createJellyfin12RowComponents();
+        const homeView = createHomeView(nativeRowComponents);
 
         const homeController = createHomeController(
             catalogApi,
