@@ -16,7 +16,10 @@ function createCustomizedElement(
             document,
         ) as LegacyCreateElement;
 
-    return createElement(tagName, is);
+    return createElement(
+        tagName,
+        is,
+    );
 }
 
 export function createJellyfin12RowComponents():
@@ -26,6 +29,13 @@ export function createJellyfin12RowComponents():
             return createCustomizedElement(
                 'div',
                 'emby-scroller',
+            );
+        },
+
+        createItemsContainer(): HTMLElement {
+            return createCustomizedElement(
+                'div',
+                'emby-itemscontainer',
             );
         },
     };

@@ -29,7 +29,6 @@ export function createMediaRow(
 
     const scroller = nativeComponents.createScroller();
 
-    scroller.setAttribute('is', 'emby-scroller');
     scroller.setAttribute('data-centerfocus', 'true');
     scroller.setAttribute('data-scroll-mode-x', 'custom');
 
@@ -38,7 +37,7 @@ export function createMediaRow(
         'padded-bottom-focusscale ' +
         'emby-scroller';
 
-    const itemsContainer = document.createElement('div');
+    const itemsContainer = nativeComponents.createItemsContainer();
 
     itemsContainer.className =
         'itemsContainer scrollSlider ' +

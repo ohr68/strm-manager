@@ -61,6 +61,9 @@ export function createNativeRowComponentsMock():
     return {
         createScroller: () =>
             new ElementMock() as unknown as HTMLElement,
+
+        createItemsContainer: () =>
+            new ElementMock() as unknown as HTMLElement,
     };
 }
 
