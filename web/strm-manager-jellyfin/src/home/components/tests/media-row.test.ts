@@ -36,7 +36,7 @@ describe('createMediaRow', () => {
         }) as unknown as ElementMock;
 
         expect(section.className).toBe(
-            'verticalSection',
+            'verticalSection emby-scroller-container',
         );
 
         const heading = getChild(section, 0);
@@ -52,7 +52,8 @@ describe('createMediaRow', () => {
 
         expect(scroller.className).toBe(
             'padded-top-focusscale ' +
-                'padded-bottom-focusscale',
+                'padded-bottom-focusscale ' +
+                'emby-scroller',
         );
 
         const itemsContainer =
