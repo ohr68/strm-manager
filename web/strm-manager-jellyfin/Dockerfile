@@ -2,6 +2,10 @@ FROM node:24-alpine AS web-build
 
 WORKDIR /src
 
+ARG VITE_STRM_MANAGER_BASE_URL
+
+ENV VITE_STRM_MANAGER_BASE_URL=${VITE_STRM_MANAGER_BASE_URL}
+
 RUN corepack enable
 
 COPY package.json pnpm-lock.yaml ./
