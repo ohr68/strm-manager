@@ -48,6 +48,42 @@ export function createMediaCard(
         scalable.appendChild(image);
     }
 
+    const overlay = document.createElement('div');
+
+    overlay.className =
+        'cardOverlayContainer';
+
+    const playButton = document.createElement('button');
+
+    playButton.type = 'button';
+    playButton.className =
+        'cardOverlayButton ' +
+        'cardOverlayButton-hover ' +
+        'paper-icon-button-light ' +
+        'cardOverlayFab-primary';
+
+    playButton.setAttribute(
+        'aria-label',
+        `Preparar ${item.title}`,
+    );
+
+    const playIcon = document.createElement('span');
+
+    playIcon.className =
+        'material-icons ' +
+        'cardOverlayButtonIcon ' +
+        'cardOverlayButtonIcon-hover ' +
+        'play_arrow';
+
+    playIcon.setAttribute(
+        'aria-hidden',
+        'true',
+    );
+
+    playButton.appendChild(playIcon);
+    overlay.appendChild(playButton);
+    scalable.appendChild(overlay);
+
     const title = document.createElement('div');
 
     title.className =

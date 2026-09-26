@@ -107,6 +107,115 @@ describe('createMediaCard', () => {
         );
     });
 
+    it('renders native-style hover overlay', () => {
+        const card = createMediaCard({
+            title: 'Joker',
+            imageUrl: '/joker.jpg',
+        });
+
+        const element =
+            card as unknown as ElementMock;
+
+        const cardBox = getChild(element, 0);
+        const scalable = getChild(cardBox, 0);
+
+        // padder = 0
+        // artwork = 1
+        // overlay = 2
+        const overlay = getChild(scalable, 2);
+
+        expect(overlay.className).toBe(
+            'cardOverlayContainer',
+        );
+
+        const playButton = getChild(overlay, 0);
+
+        expect(playButton.className).toBe(
+            'cardOverlayButton ' +
+            'cardOverlayButton-hover ' +
+            'paper-icon-button-light ' +
+            'cardOverlayFab-primary',
+        );
+
+        expect(
+            playButton.attributes.get('aria-label'),
+        ).toBe('Preparar Joker');
+
+        const playIcon = getChild(playButton, 0);
+
+        expect(playIcon.className).toBe(
+            'material-icons ' +
+            'cardOverlayButtonIcon ' +
+            'cardOverlayButtonIcon-hover ' +
+            'play_arrow',
+        );
+
+        expect(
+            playIcon.attributes.get('aria-hidden'),
+        ).toBe('true');
+    });
+
+    it('renders native-style hover overlay', () => {
+        const card = createMediaCard({
+            title: 'Joker',
+            imageUrl: '/joker.jpg',
+        });
+
+        const element =
+            card as unknown as ElementMock;
+
+        const cardBox = getChild(element, 0);
+        const scalable = getChild(cardBox, 0);
+        const overlay = getChild(scalable, 2);
+
+        expect(overlay.className).toBe(
+            'cardOverlayContainer',
+        );
+
+        const playButton = getChild(overlay, 0);
+
+        expect(playButton.className).toBe(
+            'cardOverlayButton ' +
+            'cardOverlayButton-hover ' +
+            'paper-icon-button-light ' +
+            'cardOverlayFab-primary',
+        );
+
+        expect(
+            playButton.attributes.get('aria-label'),
+        ).toBe('Preparar Joker');
+
+        const playIcon = getChild(playButton, 0);
+
+        expect(playIcon.className).toBe(
+            'material-icons ' +
+            'cardOverlayButtonIcon ' +
+            'cardOverlayButtonIcon-hover ' +
+            'play_arrow',
+        );
+
+        expect(
+            playIcon.attributes.get('aria-hidden'),
+        ).toBe('true');
+    });
+
+    it('renders hover overlay without artwork', () => {
+        const card = createMediaCard({
+            title: 'Joker',
+        });
+
+        const element =
+            card as unknown as ElementMock;
+
+        const cardBox = getChild(element, 0);
+        const scalable = getChild(cardBox, 0);
+        const overlay = getChild(scalable, 1);
+
+        expect(overlay.className).toBe(
+            'cardOverlayContainer',
+        );
+    });
+
     it('notifies when the card is selected', () => {
         const item = {
             id: 'tt7286456',
