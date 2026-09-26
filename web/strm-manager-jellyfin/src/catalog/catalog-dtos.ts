@@ -11,4 +11,6 @@ export interface MovieRowDto {
     readonly movies: readonly CatalogMovieDto[];
 }
 
-export type MovieRowsResponse = readonly MovieRowDto[];
+export interface MovieRowsResponse {
+    readonly rows: readonly MovieRowDto[];
+}

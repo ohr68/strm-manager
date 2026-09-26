@@ -7,20 +7,22 @@ import { mapMovieRowsToMediaRows } from '../catalog-mapper';
 
 describe('mapMovieRowsToMediaRows', () => {
     it('maps catalog rows to home media rows', () => {
-        const result = mapMovieRowsToMediaRows([
-            {
-                id: 'popular',
-                name: 'Popular',
-                movies: [
-                    {
-                        externalId: 'movie-1',
-                        title: 'Joker',
-                        year: 2019,
-                        posterUrl: '/joker.jpg',
-                    },
-                ],
-            },
-        ]);
+        const result = mapMovieRowsToMediaRows({
+            rows: [
+                {
+                    id: 'popular',
+                    name: 'Popular',
+                    movies: [
+                        {
+                            externalId: 'movie-1',
+                            title: 'Joker',
+                            year: 2019,
+                            posterUrl: '/joker.jpg',
+                        },
+                    ],
+                },
+            ],
+        });
 
         expect(result).toEqual([
             {
@@ -39,20 +41,22 @@ describe('mapMovieRowsToMediaRows', () => {
     });
 
     it('omits optional presentation values when absent', () => {
-        const result = mapMovieRowsToMediaRows([
-            {
-                id: 'popular',
-                name: 'Popular',
-                movies: [
-                    {
-                        externalId: 'movie-1',
-                        title: 'Unknown',
-                        year: null,
-                        posterUrl: null,
-                    },
-                ],
-            },
-        ]);
+        const result = mapMovieRowsToMediaRows({
+            rows: [
+                {
+                    id: 'popular',
+                    name: 'Popular',
+                    movies: [
+                        {
+                            externalId: 'movie-1',
+                            title: 'Unknown',
+                            year: null,
+                            posterUrl: null,
+                        },
+                    ],
+                },
+            ],
+        });
 
         expect(result[0]?.items[0]).toEqual({
             id: 'movie-1',

@@ -11,20 +11,22 @@ import { createHomeController } from '../home-controller';
 describe('createHomeController', () => {
     it('loads catalog rows and renders the home view', async () => {
         const catalogApi: CatalogApi = {
-            getMovieRows: vi.fn().mockResolvedValue([
-                {
-                    id: 'popular',
-                    name: 'Popular',
-                    movies: [
-                        {
-                            externalId: 'movie-1',
-                            title: 'Joker',
-                            year: 2019,
-                            posterUrl: '/joker.jpg',
-                        },
-                    ],
-                },
-            ]),
+            getMovieRows: vi.fn().mockResolvedValue({
+                rows: [
+                    {
+                        id: 'popular',
+                        name: 'Popular',
+                        movies: [
+                            {
+                                externalId: 'movie-1',
+                                title: 'Joker',
+                                year: 2019,
+                                posterUrl: '/joker.jpg',
+                            },
+                        ],
+                    },
+                ],
+            }),
         };
 
         const render = vi.fn();

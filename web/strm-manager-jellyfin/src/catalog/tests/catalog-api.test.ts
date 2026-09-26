@@ -9,7 +9,11 @@ import { createCatalogApi } from '../catalog-api';
 
 describe('createCatalogApi', () => {
     it('requests movie rows from the catalog endpoint', async () => {
-        const get = vi.fn().mockResolvedValue([]);
+        const response = {
+            rows: [],
+        };
+
+        const get = vi.fn().mockResolvedValue(response);
 
         const http: HttpClient = {
             get,
@@ -20,7 +24,7 @@ describe('createCatalogApi', () => {
 
         await expect(
             api.getMovieRows(),
-        ).resolves.toEqual([]);
+        ).resolves.toEqual(response);
 
         expect(get).toHaveBeenCalledOnce();
         expect(get).toHaveBeenCalledWith(

@@ -6,9 +6,9 @@ import type { MediaCardModel } from '../home/components/media-card';
 import type { MediaRowModel } from '../home/components/media-row';
 
 export function mapMovieRowsToMediaRows(
-    rows: MovieRowsResponse,
+    response: MovieRowsResponse,
 ): readonly MediaRowModel[] {
-    return rows.map((row) => ({
+    return response.rows.map((row) => ({
         id: row.id,
         title: row.name,
         items: row.movies.map(mapMovieToMediaCard),
