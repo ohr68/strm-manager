@@ -17,7 +17,7 @@ export function createMediaRow(
     const section = document.createElement('div');
 
     section.className =
-        'verticalSection emby-scroller-container';
+        'verticalSection';
 
     const heading = document.createElement('h2');
 
@@ -29,8 +29,7 @@ export function createMediaRow(
 
     scroller.className =
         'padded-top-focusscale ' +
-        'padded-bottom-focusscale ' +
-        'emby-scroller';
+        'padded-bottom-focusscale';
 
     const itemsContainer = document.createElement('div');
 
