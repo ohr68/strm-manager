@@ -1,7 +1,25 @@
 import axios, {
     type AxiosInstance,
 } from 'axios';
-import type { HttpClient } from './http-client';
+import {
+    HttpError,
+    type HttpClient,
+} from './http-client';
+
+function toHttpError(
+    error: unknown,
+): never {
+    if (
+        axios.isAxiosError(error) &&
+        error.response
+    ) {
+        throw new HttpError(
+            error.response.status,
+        );
+    }
+
+    throw error;
+}
 
 export function createAxiosHttpClient(
     baseUrl: string,
@@ -16,21 +34,31 @@ export function createAxiosHttpClient(
 
     return {
         async get<T>(path: string): Promise<T> {
-            const response = await client.get<T>(path);
+            try {
+                const response =
+                    await client.get<T>(path);
 
-            return response.data;
+                return response.data;
+            } catch (error) {
+                return toHttpError(error);
+            }
         },
 
         async post<TResponse, TBody = unknown>(
             path: string,
             body?: TBody,
         ): Promise<TResponse> {
-            const response = await client.post<TResponse>(
-                path,
-                body,
-            );
+            try {
+                const response =
+                    await client.post<TResponse>(
+                        path,
+                        body,
+                    );
 
-            return response.data;
+                return response.data;
+            } catch (error) {
+                return toHttpError(error);
+            }
         },
     };
 }

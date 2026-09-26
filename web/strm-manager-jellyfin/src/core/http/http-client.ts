@@ -6,3 +6,17 @@ export interface HttpClient {
         body?: TBody,
     ): Promise<TResponse>;
 }
+
+export class HttpError extends Error {
+    constructor(
+        readonly status: number,
+        message?: string,
+    ) {
+        super(
+            message ??
+                `HTTP request failed with status ${status}.`,
+        );
+
+        this.name = 'HttpError';
+    }
+}

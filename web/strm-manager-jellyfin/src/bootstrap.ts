@@ -8,6 +8,10 @@ import { createCatalogApi } from './catalog/catalog-api';
 import { getAppConfig } from './core/config/app-config';
 import { createAxiosHttpClient } from './core/http/axios-http-client';
 import { createHomeController } from './home/home-controller';
+import { createJellyfinLibraryApi } from './watch/jellyfin-library-api';
+import { createMovieWatchFlow } from './watch/movie-watch-flow';
+import { createMovieWatchApi } from './watch/movie-watch-api';
+
 
 const LOG_PREFIX = '[STRM Manager]';
 
@@ -50,13 +54,52 @@ async function bootstrap(): Promise<void> {
         );
 
         const catalogApi = createCatalogApi(http);
-        const nativeRowComponents = createJellyfin12RowComponents();
-        const homeView = createHomeView(nativeRowComponents);
+        const movieWatchApi = createMovieWatchApi(http);
 
-        const homeController = createHomeController(
-            catalogApi,
-            homeView,
-        );
+        const jellyfinLibraryApi = createJellyfinLibraryApi(http);
+
+        const movieWatchFlow =
+            createMovieWatchFlow(
+                movieWatchApi,
+                jellyfinLibraryApi,
+            );
+
+        const nativeRowComponents = createJellyfin12RowComponents();
+
+        const homeView =
+            createHomeView(
+                nativeRowComponents,
+            );
+
+        const homeController =
+            createHomeController(
+                catalogApi,
+                homeView,
+                async (movie) => {
+                    if (!movie.id) {
+                        console.error(
+                            `${LOG_PREFIX} Cannot watch movie without an external id.`,
+                        );
+                        return;
+                    }
+
+                    try {
+                        const itemId =
+                            await movieWatchFlow.prepare(
+                                movie.id,
+                            );
+
+                        await bridge.navigation.openItem({
+                            id: itemId,
+                        });
+                    } catch (error) {
+                        console.error(
+                            `${LOG_PREFIX} Failed to prepare movie for playback.`,
+                            error,
+                        );
+                    }
+                },
+            );
 
         const homeIntegration =
         startJellyfin12HomeIntegration(
