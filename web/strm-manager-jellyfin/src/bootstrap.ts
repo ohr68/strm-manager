@@ -3,6 +3,10 @@ import { createJellyfin12Bridge } from './jellyfin/jellyfin12/create-jellyfin-12
 import { startJellyfin12HomeIntegration } from './jellyfin/jellyfin12/start-jellyfin-12-home-integration';
 import { waitForJellyfin12Globals } from './jellyfin/jellyfin12/wait-for-jellyfin-12-globals';
 import { createHomeView } from './home/home-view';
+import { createCatalogApi } from './catalog/catalog-api';
+import { getAppConfig } from './core/config/app-config';
+import { createAxiosHttpClient } from './core/http/axios-http-client';
+import { createHomeController } from './home/home-controller';
 
 const LOG_PREFIX = '[STRM Manager]';
 
@@ -30,27 +34,39 @@ async function bootstrap(): Promise<void> {
             },
         );
 
+        const config = getAppConfig();
+
+        if (!config) {
+            console.info(
+                `${LOG_PREFIX} STRM Manager API configuration unavailable.`,
+            );
+
+            return;
+        }
+
+        const http = createAxiosHttpClient(
+            config.strmManagerBaseUrl,
+        );
+
+        const catalogApi = createCatalogApi(http);
         const homeView = createHomeView();
+
+        const homeController = createHomeController(
+            catalogApi,
+            homeView,
+        );
 
         const homeIntegration =
         startJellyfin12HomeIntegration(
             (root) => {
-                homeView.render(
-                    root,
-                    [
-                        {
-                            id: 'strm-manager',
-                            title: 'STRM Manager',
-                            items: [
-                                {
-                                    id: 'joker',
-                                    title: 'Joker',
-                                    subtitle: '2019',
-                                },
-                            ],
-                        },
-                    ],
-                );
+                void homeController
+                    .load(root)
+                    .catch((error: unknown) => {
+                        console.error(
+                            `${LOG_PREFIX} Failed to load home catalog.`,
+                            error,
+                        );
+                    });
             },
         );
 
