@@ -8,6 +8,17 @@ class ElementMock {
     className = '';
     textContent: string | null = null;
     readonly children: ElementMock[] = [];
+    readonly attributes = new Map<string, string>();
+    readonly style = {
+        backgroundImage: '',
+    };
+
+    setAttribute(
+        name: string,
+        value: string,
+    ): void {
+        this.attributes.set(name, value);
+    }
 
     append(...children: ElementMock[]): void {
         this.children.push(...children);
@@ -193,6 +204,49 @@ describe('renderHomeRow', () => {
         expect(root.children).toHaveLength(1);
         expect(getChild(root, 0).className).toBe(
             'verticalSection emby-scroller-container',
+        );
+    });
+
+    it('renders item artwork when an image URL is provided', () => {
+        const root = new ElementMock();
+
+        renderHomeRow(
+            root as unknown as HTMLElement,
+            {
+                title: 'STRM Manager',
+                items: [
+                    {
+                        title: 'Joker',
+                        subtitle: '2019',
+                        imageUrl: '/joker.jpg',
+                    },
+                ],
+            },
+        );
+
+        const cardBox =
+            getChild(getFirstCard(root), 0);
+
+        const scalable =
+            getChild(cardBox, 0);
+
+        const image =
+            getChild(scalable, 1);
+
+        expect(image.className).toBe(
+            'cardImageContainer coveredImage cardContent',
+        );
+
+        expect(image.attributes.get('role')).toBe(
+            'img',
+        );
+
+        expect(
+            image.attributes.get('aria-label'),
+        ).toBe('Joker');
+
+        expect(image.style.backgroundImage).toBe(
+            'url("/joker.jpg")',
         );
     });
 });

@@ -1,6 +1,7 @@
 export interface HomeRowItem {
     readonly title: string;
     readonly subtitle?: string;
+    readonly imageUrl?: string;
 }
 
 export interface RenderHomeRowOptions {
@@ -75,6 +76,28 @@ function renderHomeRowItem(
         'cardPadder cardPadder-overflowPortrait';
 
     scalable.appendChild(padder);
+
+    if (item.imageUrl) {
+        const image = document.createElement('div');
+
+        image.className =
+            'cardImageContainer coveredImage cardContent';
+
+        image.setAttribute(
+            'role',
+            'img',
+        );
+
+        image.setAttribute(
+            'aria-label',
+            item.title,
+        );
+
+        image.style.backgroundImage =
+            `url("${item.imageUrl}")`;
+
+        scalable.appendChild(image);
+    }
 
     const title = document.createElement('div');
 
