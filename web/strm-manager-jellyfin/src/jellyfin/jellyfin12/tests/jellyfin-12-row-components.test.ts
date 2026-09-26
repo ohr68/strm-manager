@@ -54,25 +54,4 @@ describe('createJellyfin12RowComponents', () => {
             });
         },
     );
-
-    it(
-        'creates the items container using the Jellyfin 12 legacy customized element signature',
-        () => {
-            const components =
-                createJellyfin12RowComponents();
-
-            const itemsContainer =
-                components.createItemsContainer();
-
-            expect(createElement).toHaveBeenCalledWith(
-                'div',
-                'emby-itemscontainer',
-            );
-
-            expect(itemsContainer).toEqual({
-                tagName: 'DIV',
-                is: 'emby-itemscontainer',
-            });
-        },
-    );
 });

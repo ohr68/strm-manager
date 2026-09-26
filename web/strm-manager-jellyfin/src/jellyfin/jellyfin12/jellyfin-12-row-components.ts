@@ -28,12 +28,5 @@ export function createJellyfin12RowComponents():
                 'emby-scroller',
             );
         },
-
-        createItemsContainer(): HTMLElement {
-            return createCustomizedElement(
-                'div',
-                'emby-itemscontainer',
-            );
-        },
     };
 }
