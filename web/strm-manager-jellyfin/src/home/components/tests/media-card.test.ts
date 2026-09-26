@@ -5,7 +5,10 @@ import {
     expect,
     it,
 } from 'vitest';
-import { createMediaCard } from '../media-card';
+import {
+    createMediaCard,
+    type MediaCardModel,
+} from '../media-card';
 import {
     createDocumentMock,
     ElementMock,
@@ -102,5 +105,23 @@ describe('createMediaCard', () => {
         expect(image.style.backgroundImage).toBe(
             'url("/joker.jpg")',
         );
+    });
+
+    it('notifies when the card is selected', () => {
+        const item = {
+            id: 'tt7286456',
+            title: 'Joker',
+            subtitle: '2019',
+        };
+
+        const selections: MediaCardModel[] = [];
+
+        const card = createMediaCard(item, (selected) => {
+            selections.push(selected);
+        });
+
+        card.click();
+
+        expect(selections).toEqual([item]);
     });
 });

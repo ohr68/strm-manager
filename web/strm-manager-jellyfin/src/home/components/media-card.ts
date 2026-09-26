@@ -5,8 +5,13 @@ export interface MediaCardModel {
     readonly imageUrl?: string;
 }
 
+export type MediaCardSelectHandler = (
+    item: MediaCardModel,
+) => void;
+
 export function createMediaCard(
     item: MediaCardModel,
+    onSelect?: MediaCardSelectHandler,
 ): HTMLElement {
     const card = document.createElement('div');
 
@@ -65,6 +70,12 @@ export function createMediaCard(
     }
 
     card.appendChild(cardBox);
+
+    if (onSelect) {
+        card.addEventListener('click', () => {
+            onSelect(item);
+        });
+    }
 
     return card;
 }

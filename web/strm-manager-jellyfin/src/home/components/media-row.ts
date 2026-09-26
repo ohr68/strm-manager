@@ -1,6 +1,7 @@
 import {
     createMediaCard,
     type MediaCardModel,
+    type MediaCardSelectHandler,
 } from './media-card';
 
 export interface MediaRowModel {
@@ -11,6 +12,7 @@ export interface MediaRowModel {
 
 export function createMediaRow(
     row: MediaRowModel,
+    onSelect?: MediaCardSelectHandler,
 ): HTMLElement {
     const section = document.createElement('div');
 
@@ -38,7 +40,7 @@ export function createMediaRow(
 
     for (const item of row.items) {
         itemsContainer.appendChild(
-            createMediaCard(item),
+            createMediaCard(item, onSelect),
         );
     }
 

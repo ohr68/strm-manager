@@ -7,11 +7,36 @@ export class ElementMock {
         backgroundImage: '',
     };
 
+    private readonly listeners = new Map<
+        string,
+        Array<() => void>
+    >();
+
     setAttribute(
         name: string,
         value: string,
     ): void {
         this.attributes.set(name, value);
+    }
+
+    addEventListener(
+        type: string,
+        listener: () => void,
+    ): void {
+        const listeners =
+            this.listeners.get(type) ?? [];
+
+        listeners.push(listener);
+        this.listeners.set(type, listeners);
+    }
+
+    click(): void {
+        for (
+            const listener of
+            this.listeners.get('click') ?? []
+        ) {
+            listener();
+        }
     }
 
     append(...children: ElementMock[]): void {

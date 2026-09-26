@@ -1,3 +1,4 @@
+import type { MediaCardModel } from './components/media-card';
 import {
     createMediaRow,
     type MediaRowModel,
@@ -7,18 +8,18 @@ export interface HomeView {
     render(
         root: HTMLElement,
         rows: readonly MediaRowModel[],
+        onSelect?: (item: MediaCardModel) => void,
     ): void;
 }
 
 export function createHomeView(): HomeView {
     return {
-        render(
-            root: HTMLElement,
-            rows: readonly MediaRowModel[],
-        ): void {
+        render(root, rows, onSelect): void {
             root.replaceChildren(
-                ...rows.map(createMediaRow),
+                ...rows.map((row) =>
+                    createMediaRow(row, onSelect),
+                ),
             );
-        },
+        }
     };
 }
