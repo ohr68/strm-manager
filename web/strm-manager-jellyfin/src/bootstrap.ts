@@ -3,6 +3,7 @@ import { createJellyfin12Bridge } from './jellyfin/jellyfin12/create-jellyfin-12
 import { startJellyfin12HomeIntegration } from './jellyfin/jellyfin12/start-jellyfin-12-home-integration';
 import { waitForJellyfin12Globals } from './jellyfin/jellyfin12/wait-for-jellyfin-12-globals';
 import { createJellyfin12RowComponents } from './jellyfin/jellyfin12/jellyfin-12-row-components';
+import { createJellyfin12HttpClient } from './jellyfin/jellyfin12/jellyfin-12-http-client';
 import { createHomeView } from './home/home-view';
 import { createCatalogApi } from './catalog/catalog-api';
 import { getAppConfig } from './core/config/app-config';
@@ -49,14 +50,25 @@ async function bootstrap(): Promise<void> {
             return;
         }
 
-        const http = createAxiosHttpClient(
+        const backendHttp = createAxiosHttpClient(
             config.strmManagerBaseUrl,
         );
 
-        const catalogApi = createCatalogApi(http);
-        const movieWatchApi = createMovieWatchApi(http);
+        const jellyfinHttp = createJellyfin12HttpClient(
+            globals,
+        );
 
-        const jellyfinLibraryApi = createJellyfinLibraryApi(http);
+        const catalogApi = createCatalogApi(
+            backendHttp,
+        );
+
+        const movieWatchApi = createMovieWatchApi(
+            jellyfinHttp,
+        );
+
+        const jellyfinLibraryApi = createJellyfinLibraryApi(
+            jellyfinHttp,
+        );
 
         const movieWatchFlow =
             createMovieWatchFlow(

@@ -17,6 +17,13 @@ export interface Jellyfin12Item {
     readonly ProductionYear?: number;
 }
 
+export interface Jellyfin12AjaxOptions {
+    readonly type: 'GET' | 'POST';
+    readonly url: string;
+    readonly dataType: 'json';
+    readonly data?: unknown;
+}
+
 export interface Jellyfin12ApiClient {
     getCurrentUserId(): string | null;
     getSystemInfo(): Promise<Jellyfin12SystemInfo>;
@@ -25,6 +32,10 @@ export interface Jellyfin12ApiClient {
         itemId: string,
     ): Promise<Jellyfin12Item>;
     serverInfo(): Jellyfin12ServerInfo;
+    getUrl?(path: string): string;
+    ajax?<T>(
+        options: Jellyfin12AjaxOptions,
+    ): Promise<T>;
 }
 
 export interface Jellyfin12Dashboard {
