@@ -10,9 +10,9 @@ using StrmManager.Modules.Catalog.Domain.Seasons;
 using StrmManager.Modules.Catalog.Domain.Shared;
 using StrmManager.Modules.Catalog.Domain.SourceAttempts;
 using StrmManager.Modules.Catalog.Domain.StrmFiles;
+using StrmManager.Modules.MediaProcessing.Application.Selection;
 using StrmManager.Modules.MediaProcessing.Application.StrmGeneration;
 using StrmManager.Modules.MediaProcessing.Application.Streams;
-using StrmManager.Modules.MediaProcessing.Application.Streams.EpisodeIdentity;
 using StrmManager.Modules.MediaProcessing.Application.Validation;
 using ISeriesRepository = StrmManager.Modules.Catalog.Domain.Series.ISeriesRepository;
 using SeriesEntity = StrmManager.Modules.Catalog.Domain.Series.Series;
@@ -125,35 +125,41 @@ internal sealed partial class ProcessEpisodeCommandHandler(
         int attemptsThisRun = 0;
         StreamCandidate? approvedCandidate = null;
 
-        foreach (StreamCandidate candidate in candidates)
+        var validationReference = new MediaValidationReference(episode.Runtime);
+
+        await foreach (EpisodeCandidateEvaluation evaluation in
+                       EpisodeSourceSelector.EvaluateAsync(
+                           candidates,
+                           episode.SeasonNumber,
+                           episode.EpisodeNumber,
+                           validationReference,
+                           mediaValidator,
+                           cancellationToken))
         {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            string candidateText = $"{candidate.Name} {candidate.Description}";
-            EpisodeIdentityMatch identityMatch = EpisodeIdentityValidator.Evaluate(candidateText, episode.SeasonNumber, episode.EpisodeNumber);
-
-            if (identityMatch != EpisodeIdentityMatch.Compatible)
-            {
-                string reason = identityMatch == EpisodeIdentityMatch.Conflicting
-                    ? "Candidate references a different episode."
-                    : "Could not confirm the candidate's episode identity.";
-
-                RecordAttempt(episode.Id, candidate, SourceAttemptResult.Rejected, null, episode.Runtime, null, null, null, reason);
-                attemptsThisRun++;
-                continue;
-            }
-
-            var validationReference = new MediaValidationReference(episode.Runtime);
-            MediaValidationResult validationResult = await mediaValidator.ValidateAsync(candidate, validationReference, cancellationToken);
+            StreamCandidate candidate = evaluation.Candidate;
+            MediaValidationResult validationResult = evaluation.Result;
 
             RecordAttempt(
-                episode.Id, candidate, validationResult.Result, validationResult.Duration, validationResult.ExpectedDuration,
-                validationResult.DifferencePercentage, validationResult.VideoCodec, validationResult.AudioCodec, validationResult.FailureReason);
+                episode.Id,
+                candidate,
+                validationResult.Result,
+                validationResult.Duration,
+                validationResult.ExpectedDuration,
+                validationResult.DifferencePercentage,
+                validationResult.VideoCodec,
+                validationResult.AudioCodec,
+                validationResult.FailureReason);
+
             attemptsThisRun++;
 
-            LogCandidateAttempt(logger, episode.Id, candidate.Name, attemptsThisRun, validationResult.Result);
+            LogCandidateAttempt(
+                logger,
+                episode.Id,
+                candidate.Name,
+                attemptsThisRun,
+                validationResult.Result);
 
-            if (validationResult.Approved)
+            if (evaluation.Approved)
             {
                 approvedCandidate = candidate;
                 break;
