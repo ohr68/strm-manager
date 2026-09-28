@@ -12,5 +12,9 @@ public interface IMovieRepository
 
     Task<IReadOnlyList<Movie>> GetStaleProcessingAsync(DateTime staleThresholdUtc, CancellationToken cancellationToken = default);
 
+    Task<IReadOnlyList<Movie>> GetPendingForProcessingAsync(
+        int limit,
+        CancellationToken cancellationToken = default);
+
     void Insert(Movie movie);
 }

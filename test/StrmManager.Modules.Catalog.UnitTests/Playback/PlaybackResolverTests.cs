@@ -512,6 +512,8 @@ public class PlaybackResolverTests
         public Task<IReadOnlyList<Movie>> GetRetryableAsync(DateTime utcNow, CancellationToken cancellationToken = default) => throw new NotSupportedException();
 
         public Task<IReadOnlyList<Movie>> GetStaleProcessingAsync(DateTime staleThresholdUtc, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+        public Task<IReadOnlyList<Movie>> GetPendingForProcessingAsync(int limit, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     }
 
     private sealed class FakeStreamProvider : IStreamProvider

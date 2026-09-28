@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
 using StrmManager.Modules.Catalog.Application.Status;
 
 namespace StrmManager.Modules.Scheduling.Infrastructure;
@@ -19,8 +20,17 @@ public static class SchedulingModule
         // this real implementation is what GetOperationalStatusQueryHandler resolves.
         services.AddSingleton<ISchedulerStatusProvider, SchedulerStatusProvider>();
 
+        services.AddSingleton(sp =>
+        {
+            SchedulingOptions schedulingOptions =
+                sp.GetRequiredService<IOptions<SchedulingOptions>>().Value;
+
+            return new MediaProcessingConcurrencyLimiter(schedulingOptions);
+        });
+
         services.AddHostedService<CatalogMaintenanceWorker>();
         services.AddHostedService<EpisodeProcessingWorker>();
+        services.AddHostedService<MovieProcessingWorker>();
 
         return services;
     }

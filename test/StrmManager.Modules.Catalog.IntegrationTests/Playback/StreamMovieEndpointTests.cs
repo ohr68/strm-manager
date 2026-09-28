@@ -318,13 +318,14 @@ public class StreamMovieEndpointTests(ApiWebApplicationFactory factory) : IClass
         ObservedResponse response = await host.SendAsync("GET", StablePlaybackHost.RouteFor(Movie));
         Assert.Equal(307, response.Status);
 
-        RouteEndpoint[] mediaEndpoints = host.Services.GetRequiredService<EndpointDataSource>().Endpoints
-            .OfType<RouteEndpoint>()
-            .Where(e => (e.RoutePattern.RawText ?? string.Empty).TrimStart('/').StartsWith("media", StringComparison.OrdinalIgnoreCase))
-            .ToArray();
+        RouteEndpoint stream = Assert.Single(
+            host.Services.GetRequiredService<EndpointDataSource>().Endpoints
+                .OfType<RouteEndpoint>(),
+            e => string.Equals(
+                e.RoutePattern.RawText?.TrimStart('/'),
+                "media/{movieId:guid}/stream",
+                StringComparison.OrdinalIgnoreCase));
 
-        RouteEndpoint stream = Assert.Single(mediaEndpoints);
-        Assert.Equal("media/{movieId:guid}/stream", stream.RoutePattern.RawText!.TrimStart('/'));
         Assert.Empty(stream.Metadata.GetOrderedMetadata<IAuthorizeData>()); // nothing requires a login or elevation
         Assert.Equal(["GET", "HEAD"], stream.Metadata.GetMetadata<HttpMethodMetadata>()!.HttpMethods.Order());
     }

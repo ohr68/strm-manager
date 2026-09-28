@@ -19,6 +19,7 @@ namespace StrmManager.Modules.Scheduling.Infrastructure;
 /// </summary>
 internal sealed partial class EpisodeProcessingWorker(
     IServiceScopeFactory scopeFactory,
+    MediaProcessingConcurrencyLimiter concurrencyLimiter,
     IOptions<SchedulingOptions> options,
     ILogger<EpisodeProcessingWorker> logger)
     : BackgroundService
@@ -31,19 +32,18 @@ internal sealed partial class EpisodeProcessingWorker(
             return;
         }
 
-        LogStarted(logger, options.Value.ProcessingInterval, options.Value.MaxConcurrentEpisodeProcessing);
+        LogStarted(logger, options.Value.ProcessingInterval, options.Value.MaxConcurrentMediaProcessing);
 
         using var timer = new PeriodicTimer(options.Value.ProcessingInterval);
-        using var concurrencyLimiter = new SemaphoreSlim(options.Value.MaxConcurrentEpisodeProcessing);
 
         do
         {
-            await RunOnceAsync(concurrencyLimiter, stoppingToken);
+            await RunOnceAsync(stoppingToken);
         }
         while (await WaitForNextTickAsync(timer, stoppingToken));
     }
 
-    private async Task RunOnceAsync(SemaphoreSlim concurrencyLimiter, CancellationToken stoppingToken)
+    private async Task RunOnceAsync(CancellationToken stoppingToken)
     {
         Guid[] pendingEpisodeIds;
 
@@ -70,15 +70,16 @@ internal sealed partial class EpisodeProcessingWorker(
             return;
         }
 
-        await Task.WhenAll(pendingEpisodeIds.Select(episodeId => ProcessOneAsync(episodeId, concurrencyLimiter, stoppingToken)));
+        await Task.WhenAll(
+            pendingEpisodeIds.Select(
+                episodeId => ProcessOneAsync(episodeId, stoppingToken)));
     }
 
-    private async Task ProcessOneAsync(Guid episodeId, SemaphoreSlim concurrencyLimiter, CancellationToken stoppingToken)
+    private async Task ProcessOneAsync(Guid episodeId, CancellationToken stoppingToken)
     {
-        await concurrencyLimiter.WaitAsync(stoppingToken);
-
         try
         {
+            using IDisposable lease = await concurrencyLimiter.AcquireAsync(stoppingToken);
             await using AsyncServiceScope scope = scopeFactory.CreateAsyncScope();
 
             var handler = scope.ServiceProvider
@@ -102,10 +103,6 @@ internal sealed partial class EpisodeProcessingWorker(
         catch (Exception exception)
         {
             LogEpisodeProcessingCrashed(logger, episodeId, exception);
-        }
-        finally
-        {
-            concurrencyLimiter.Release();
         }
     }
 

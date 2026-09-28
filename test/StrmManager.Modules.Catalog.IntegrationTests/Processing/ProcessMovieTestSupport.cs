@@ -137,6 +137,9 @@ internal sealed class InterceptingMovieRepository(IMovieRepository inner, MovieL
     public Task<IReadOnlyList<Movie>> GetStaleProcessingAsync(DateTime staleThresholdUtc, CancellationToken cancellationToken = default) =>
         inner.GetStaleProcessingAsync(staleThresholdUtc, cancellationToken);
 
+    public Task<IReadOnlyList<Movie>> GetPendingForProcessingAsync(int limit, CancellationToken cancellationToken = default) =>
+        inner.GetPendingForProcessingAsync(limit, cancellationToken);
+
     public void Insert(Movie movie) => inner.Insert(movie);
 }
 
