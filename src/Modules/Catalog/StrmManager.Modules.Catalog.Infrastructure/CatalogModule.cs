@@ -68,6 +68,7 @@ public static class CatalogModule
 
         // Read-only, just-in-time playback resolution (ADR-015). No endpoint uses it yet.
         services.AddScoped<IPlaybackResolver, PlaybackResolver>();
+        services.AddScoped<IEpisodePlaybackResolver, EpisodePlaybackResolver>();
 
         // Single-flight + bounded concurrency around the resolver. A SINGLETON on purpose: the in-flight state must be
         // shared by every request. It therefore takes no scoped dependency - it gets the root scope factory and creates
