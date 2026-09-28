@@ -18,7 +18,12 @@ namespace StrmManager.ArchitectureTests;
 /// </summary>
 public class StablePlaybackEndpointTests
 {
-    private const string EndpointFullName = "StrmManager.Modules.Catalog.Presentation.Movies.StreamMovie";
+    private static readonly string[] EndpointFullNames =
+    [
+        "StrmManager.Modules.Catalog.Presentation.Movies.StreamMovie",
+        "StrmManager.Modules.Catalog.Presentation.Episodes.StreamEpisode",
+    ];
+
     private const string ControlFullName = "StrmManager.Modules.Catalog.Presentation.Movies.ProcessMovie";
 
     private static readonly string[] ForbiddenNamespaces =
@@ -112,20 +117,40 @@ public class StablePlaybackEndpointTests
     }
 
     [Fact]
-    public void TheStablePlaybackEndpoint_IsLookedAt_AndUsesNoRedirectOrResultHelper()
+    public void StablePlaybackEndpoints_AreLookedAt_AndUseNoRedirectOrResultHelper()
     {
-        Type[] endpointTypes = TypeAndItsNestedTypes(EndpointFullName).ToArray();
-        Assert.Contains(endpointTypes, type => type.FullName == EndpointFullName); // the type is really being inspected
+        foreach (string endpointFullName in EndpointFullNames)
+        {
+            Type[] endpointTypes =
+                TypeAndItsNestedTypes(endpointFullName).ToArray();
 
-        // Positive control on this very type: the scan sees what the endpoint does call (it sets response headers).
-        HashSet<Type> calledByEndpoint = TypesCalledBy(EndpointFullName);
-        Assert.Contains(calledByEndpoint, type => type.FullName!.StartsWith("Microsoft.AspNetCore.Http.", StringComparison.Ordinal));
+            Assert.Contains(
+                endpointTypes,
+                type => type.FullName == endpointFullName);
 
-        string[] offenders = calledByEndpoint.Where(IsForbidden).Select(type => type.FullName!).Order().ToArray();
+            HashSet<Type> calledByEndpoint =
+                TypesCalledBy(endpointFullName);
 
-        Assert.True(
-            offenders.Length == 0,
-            "The stable playback endpoint must write its 307 by hand (Location assigned from PlaybackLocation.Reveal() only). " +
-            $"It calls a framework redirect/result helper, which logs its destination: {string.Join(", ", offenders)}");
+            Assert.Contains(
+                calledByEndpoint,
+                type =>
+                    type.FullName!.StartsWith(
+                        "Microsoft.AspNetCore.Http.",
+                        StringComparison.Ordinal));
+
+            string[] offenders =
+                calledByEndpoint
+                    .Where(IsForbidden)
+                    .Select(type => type.FullName!)
+                    .Order()
+                    .ToArray();
+
+            Assert.True(
+                offenders.Length == 0,
+                $"Stable playback endpoint {endpointFullName} must write its 307 by hand " +
+                "(Location assigned from PlaybackLocation.Reveal() only). " +
+                "It calls a framework redirect/result helper, which logs its destination: " +
+                string.Join(", ", offenders));
+        }
     }
 }

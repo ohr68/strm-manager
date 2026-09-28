@@ -40,6 +40,32 @@ internal sealed class ControllableCoordinator : IPlaybackResolutionCoordinator
     }
 }
 
+/// <summary>
+/// Episode equivalent of <see cref="ControllableCoordinator"/>.
+/// Keeps endpoint tests independent from providers, ffprobe and persistence.
+/// </summary>
+internal sealed class ControllableEpisodeCoordinator
+    : IEpisodePlaybackResolutionCoordinator
+{
+    public ConcurrentQueue<(Guid EpisodeId, CancellationToken Token)> Calls { get; } =
+        new();
+
+    public Func<Guid, CancellationToken, Task<PlaybackCoordinationResult>> Handler { get; set; } =
+        (_, _) => throw new InvalidOperationException(
+            "The episode coordinator was not expected to be called.");
+
+    public void Returns(PlaybackCoordinationResult result) =>
+        Handler = (_, _) => Task.FromResult(result);
+
+    public Task<PlaybackCoordinationResult> ResolveAsync(
+        Guid episodeId,
+        CancellationToken waiterToken)
+    {
+        Calls.Enqueue((episodeId, waiterToken));
+        return Handler(episodeId, waiterToken);
+    }
+}
+
 /// <summary>Everything the app logged, at every level and for every category: message, each structured property, and exception text.</summary>
 internal sealed class RecordingLoggerProvider : ILoggerProvider
 {
@@ -162,6 +188,10 @@ internal sealed class StablePlaybackHost
                 services.RemoveAll<IPlaybackResolutionCoordinator>();
                 services.AddSingleton<IPlaybackResolutionCoordinator>(Coordinator);
 
+                services.RemoveAll<IEpisodePlaybackResolutionCoordinator>();
+                services.AddSingleton<IEpisodePlaybackResolutionCoordinator>(
+                    EpisodeCoordinator);
+
                 services.AddSingleton(Outcomes);
                 services.AddSingleton<IStartupFilter, RequestOutcomeRecorder.Filter>();
 
@@ -184,6 +214,9 @@ internal sealed class StablePlaybackHost
 
     public ControllableCoordinator Coordinator { get; } = new();
 
+    public ControllableEpisodeCoordinator EpisodeCoordinator { get; } =
+        new();
+
     public RecordingLoggerProvider Logs { get; } = new();
 
     public RequestOutcomeRecorder Outcomes { get; } = new();
@@ -193,6 +226,8 @@ internal sealed class StablePlaybackHost
     public HttpClient Client { get; }
 
     public static string RouteFor(Guid movieId) => $"/media/{movieId}/stream";
+    public static string EpisodeRouteFor(Guid episodeId) =>
+        $"/media/episodes/{episodeId}/stream";
 
     public async Task<ObservedResponse> SendAsync(string method, string path, string? range = null, CancellationToken cancellationToken = default)
     {
