@@ -292,6 +292,102 @@ public class CatalogMaintenanceTests : IDisposable
         Assert.Equal(1, strmFileCount); // exactly one - not duplicated by the interrupted first attempt
     }
 
+    // --- Movie release eligibility and retry ---
+    [Fact]
+    public async Task RunMaintenance_ScheduledMovieNotYetReleased_StaysScheduled()
+    {
+        Guid movieId = await ProcessMovieTestSupport.SeedMovieAsync(
+            _services,
+            MediaStatus.Scheduled,
+            releaseAtUtc: BaseUtcNow.AddDays(1));
+
+        CatalogMaintenanceResult result = await RunMaintenanceAsync();
+
+        Assert.Equal(0, result.MoviesReleased);
+        Assert.Equal(MediaStatus.Scheduled, (await GetMovieAsync(movieId)).Status);
+    }
+
+    [Fact]
+    public async Task RunMaintenance_ScheduledMovieReleased_BecomesPending()
+    {
+        Guid movieId = await ProcessMovieTestSupport.SeedMovieAsync(
+            _services,
+            MediaStatus.Scheduled,
+            releaseAtUtc: BaseUtcNow);
+
+        CatalogMaintenanceResult result = await RunMaintenanceAsync();
+
+        Assert.Equal(1, result.MoviesReleased);
+        Assert.Equal(MediaStatus.Pending, (await GetMovieAsync(movieId)).Status);
+    }
+
+    [Fact]
+    public async Task RunMaintenance_UnavailableMovieNotYetDue_StaysUntouched()
+    {
+        Guid movieId = await ProcessMovieTestSupport.SeedMovieAsync(
+            _services,
+            MediaStatus.Pending);
+
+        await MarkUnavailableMovieAsync(
+            movieId,
+            nextAttemptAtUtc: BaseUtcNow.AddHours(1));
+
+        CatalogMaintenanceResult result = await RunMaintenanceAsync();
+
+        Assert.Equal(0, result.MoviesRetried);
+        Assert.Equal(MediaStatus.Unavailable, (await GetMovieAsync(movieId)).Status);
+    }
+
+    [Fact]
+    public async Task RunMaintenance_UnavailableMovieDue_ReturnsToPending()
+    {
+        Guid movieId = await ProcessMovieTestSupport.SeedMovieAsync(
+            _services,
+            MediaStatus.Pending);
+
+        await MarkUnavailableMovieAsync(
+            movieId,
+            nextAttemptAtUtc: BaseUtcNow.AddHours(-1));
+
+        CatalogMaintenanceResult result = await RunMaintenanceAsync();
+
+        Assert.Equal(1, result.MoviesRetried);
+        Assert.Equal(MediaStatus.Pending, (await GetMovieAsync(movieId)).Status);
+    }
+
+    [Fact]
+    public async Task RunMaintenance_RetryableMovieErrorDue_ReturnsToPending()
+    {
+        Guid movieId = await ProcessMovieTestSupport.SeedMovieAsync(
+            _services,
+            MediaStatus.Pending);
+
+        await MarkMovieErrorAsync(
+            movieId,
+            nextAttemptAtUtc: BaseUtcNow.AddMinutes(-1));
+
+        CatalogMaintenanceResult result = await RunMaintenanceAsync();
+
+        Assert.Equal(1, result.MoviesRetried);
+        Assert.Equal(MediaStatus.Pending, (await GetMovieAsync(movieId)).Status);
+    }
+
+    [Fact]
+    public async Task RunMaintenance_NonRetryableMovieError_StaysUntouchedAutomatically()
+    {
+        Guid movieId = await ProcessMovieTestSupport.SeedMovieAsync(
+            _services,
+            MediaStatus.Pending);
+
+        await MarkMovieErrorAsync(movieId, nextAttemptAtUtc: null);
+
+        CatalogMaintenanceResult result = await RunMaintenanceAsync();
+
+        Assert.Equal(0, result.MoviesRetried);
+        Assert.Equal(MediaStatus.Error, (await GetMovieAsync(movieId)).Status);
+    }
+
+
     // --- Movie stale-processing recovery ---
 
     [Theory]
@@ -515,6 +611,42 @@ public class CatalogMaintenanceTests : IDisposable
         using IServiceScope scope = _services.CreateScope();
         CatalogDbContext context = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
         return await context.Set<Movie>().SingleAsync(m => m.Id == movieId);
+    }
+
+    private async Task MarkUnavailableMovieAsync(Guid movieId, DateTime? nextAttemptAtUtc)
+    {
+        using IServiceScope scope = _services.CreateScope();
+        CatalogDbContext context = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
+        Movie movie = await context.Set<Movie>().SingleAsync(m => m.Id == movieId);
+
+        Result startResult = movie.StartSearching(BaseUtcNow);
+        Assert.True(startResult.IsSuccess);
+
+        Result unavailableResult = movie.MarkUnavailable(
+            BaseUtcNow,
+            nextAttemptAtUtc,
+            "maintenance retry test");
+
+        Assert.True(unavailableResult.IsSuccess);
+        await context.SaveChangesAsync();
+    }
+
+    private async Task MarkMovieErrorAsync(Guid movieId, DateTime? nextAttemptAtUtc)
+    {
+        using IServiceScope scope = _services.CreateScope();
+        CatalogDbContext context = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
+        Movie movie = await context.Set<Movie>().SingleAsync(m => m.Id == movieId);
+
+        Result startResult = movie.StartSearching(BaseUtcNow);
+        Assert.True(startResult.IsSuccess);
+
+        Result errorResult = movie.MarkError(
+            BaseUtcNow,
+            "maintenance retry test",
+            nextAttemptAtUtc);
+
+        Assert.True(errorResult.IsSuccess);
+        await context.SaveChangesAsync();
     }
 
     private sealed record CreatedResponse(Guid Id);

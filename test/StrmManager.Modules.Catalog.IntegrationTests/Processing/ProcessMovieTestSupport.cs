@@ -43,12 +43,17 @@ internal static class ProcessMovieTestSupport
         string title = "Process Movie Test",
         int year = 2025,
         string? imdbId = null,
-        string? tmdbId = null)
+        string? tmdbId = null,
+        DateTime? releaseAtUtc = null)
     {
         await using AsyncServiceScope scope = services.CreateAsyncScope();
         CatalogDbContext context = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
 
-        DateTime releaseAtUtc = status == MediaStatus.Scheduled ? Now.AddDays(30) : Now.AddDays(-30);
+        DateTime effectiveReleaseAtUtc = releaseAtUtc ??
+                                         (status == MediaStatus.Scheduled
+                                             ? Now.AddDays(30)
+                                             : Now.AddDays(-30));
+
         Movie movie = Movie.Schedule(
             withoutImdbId
                 ? new ExternalIds(null, $"tmdb{Guid.NewGuid():N}"[..12], null)
@@ -56,7 +61,7 @@ internal static class ProcessMovieTestSupport
             title,
             year,
             TimeSpan.FromMinutes(100),
-            releaseAtUtc,
+            effectiveReleaseAtUtc,
             SeededAtUtc);
 
         switch (status)

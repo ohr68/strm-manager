@@ -16,12 +16,10 @@ namespace StrmManager.Modules.Catalog.Application.Maintenance;
 /// <summary>
 /// The housekeeping steps an autonomous server needs, bundled into one testable use case
 /// rather than one tiny handler/BackgroundService per step (see ADR-012): promote released
-/// Scheduled episodes, retry due Unavailable/Error episodes, recover stale
-/// Searching/Validating episodes AND movies (an interrupted processing run - see
-/// Episode.RecoverInterruptedProcessing/Movie.RecoverInterruptedProcessing/ADR-013), and
-/// refresh metadata for Series whose schedule is due. Called by Scheduling's
-/// CatalogMaintenanceWorker, and directly by tests - the worker adds nothing but a timer
-/// around this.
+/// Scheduled episodes and movies, retry due Unavailable/Error episodes and movies, recover
+/// stale Searching/Validating episodes and movies, and refresh metadata for Series whose
+/// schedule is due. Called by Scheduling's CatalogMaintenanceWorker, and directly by tests -
+/// the worker adds nothing but a timer around this.
 /// </summary>
 internal sealed partial class RunCatalogMaintenanceCommandHandler(
     IEpisodeRepository episodeRepository,
@@ -38,20 +36,40 @@ internal sealed partial class RunCatalogMaintenanceCommandHandler(
     {
         DateTime utcNow = timeProvider.GetUtcNow().UtcDateTime;
 
-        int released = await PromoteScheduledEpisodesAsync(utcNow, cancellationToken);
-        int retried = await RetryDueEpisodesAsync(utcNow, cancellationToken);
-        int recovered = await RecoverStaleProcessingAsync(utcNow, cancellationToken);
+        int episodesReleased = await PromoteScheduledEpisodesAsync(utcNow, cancellationToken);
+        int episodesRetried = await RetryDueEpisodesAsync(utcNow, cancellationToken);
+        int episodesRecovered = await RecoverStaleProcessingAsync(utcNow, cancellationToken);
+
+        int moviesReleased = await PromoteScheduledMoviesAsync(utcNow, cancellationToken);
+        int moviesRetried = await RetryDueMoviesAsync(utcNow, cancellationToken);
         int moviesRecovered = await RecoverStaleMovieProcessingAsync(utcNow, cancellationToken);
 
-        // One save for all four batches above - they're independent, cheap, in-memory
+        // One save for all six batches above - they're independent, cheap, in-memory
         // domain transitions with no external I/O between them.
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
         (int refreshed, int refreshFailed) = await RefreshDueSeriesMetadataAsync(utcNow, cancellationToken);
 
-        LogMaintenanceCompleted(logger, released, retried, recovered, refreshed, refreshFailed);
+        LogMaintenanceCompleted(
+            logger,
+            episodesReleased,
+            episodesRetried,
+            episodesRecovered,
+            moviesReleased,
+            moviesRetried,
+            moviesRecovered,
+            refreshed,
+            refreshFailed);
 
-        return new CatalogMaintenanceResult(released, retried, recovered, moviesRecovered, refreshed, refreshFailed);
+        return new CatalogMaintenanceResult(
+            episodesReleased,
+            episodesRetried,
+            episodesRecovered,
+            moviesReleased,
+            moviesRetried,
+            moviesRecovered,
+            refreshed,
+            refreshFailed);
     }
 
     private async Task<int> PromoteScheduledEpisodesAsync(DateTime utcNow, CancellationToken cancellationToken)
@@ -78,6 +96,35 @@ internal sealed partial class RunCatalogMaintenanceCommandHandler(
         foreach (Episode episode in retryable)
         {
             episode.Retry(utcNow);
+        }
+
+        return retryable.Count;
+    }
+
+    private async Task<int> PromoteScheduledMoviesAsync(DateTime utcNow, CancellationToken cancellationToken)
+    {
+        IReadOnlyList<Movie> due = await movieRepository.GetScheduledDueAsync(utcNow, cancellationToken);
+
+        int promoted = 0;
+
+        foreach (Movie movie in due)
+        {
+            if (movie.TryBecomeEligible(utcNow))
+            {
+                promoted++;
+            }
+        }
+
+        return promoted;
+    }
+
+    private async Task<int> RetryDueMoviesAsync(DateTime utcNow, CancellationToken cancellationToken)
+    {
+        IReadOnlyList<Movie> retryable = await movieRepository.GetRetryableAsync(utcNow, cancellationToken);
+
+        foreach (Movie movie in retryable)
+        {
+            movie.Retry(utcNow);
         }
 
         return retryable.Count;
@@ -152,6 +199,16 @@ internal sealed partial class RunCatalogMaintenanceCommandHandler(
     [LoggerMessage(Level = LogLevel.Warning, Message = "Metadata refresh failed for series {SeriesId}: {ErrorCode}")]
     private static partial void LogMetadataRefreshFailed(ILogger logger, Guid seriesId, string errorCode);
 
-    [LoggerMessage(Level = LogLevel.Information, Message = "Catalog maintenance: {Released} released, {Retried} retried, {Recovered} recovered, {Refreshed} series refreshed ({RefreshFailed} failed)")]
-    private static partial void LogMaintenanceCompleted(ILogger logger, int released, int retried, int recovered, int refreshed, int refreshFailed);
+    [LoggerMessage(Level = LogLevel.Information,
+        Message = "Catalog maintenance: episodes {EpisodesReleased} released, {EpisodesRetried} retried, {EpisodesRecovered} recovered; movies {MoviesReleased} released, {MoviesRetried} retried, {MoviesRecovered} recovered; {Refreshed} series refreshed ({RefreshFailed} failed)")]
+    private static partial void LogMaintenanceCompleted(
+        ILogger logger,
+        int episodesReleased,
+        int episodesRetried,
+        int episodesRecovered,
+        int moviesReleased,
+        int moviesRetried,
+        int moviesRecovered,
+        int refreshed,
+        int refreshFailed);
 }
