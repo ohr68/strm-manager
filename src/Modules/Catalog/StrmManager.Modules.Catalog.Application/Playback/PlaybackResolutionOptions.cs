@@ -14,7 +14,7 @@ public sealed class PlaybackResolutionOptions
     public const string SectionName = "Playback:Resolution";
 
     /// <summary>
-    /// The most underlying resolutions - each a provider lookup plus ffprobe runs - executing at once, across ALL movies.
+    /// The most underlying resolutions - each a provider lookup plus ffprobe runs - executing at once, across ALL movies and episodes.
     /// Callers waiting on an already-running movie do not count. Defaults to 2, the same conservative bound as
     /// SchedulingOptions.MaxConcurrentEpisodeProcessing, because the host also runs Jellyfin and other services.
     /// </summary>

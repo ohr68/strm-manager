@@ -70,15 +70,23 @@ public static class CatalogModule
         services.AddScoped<IPlaybackResolver, PlaybackResolver>();
         services.AddScoped<IEpisodePlaybackResolver, EpisodePlaybackResolver>();
 
+        services.AddSingleton<PlaybackResolutionCapacity>();
+
         // Single-flight + bounded concurrency around the resolver. A SINGLETON on purpose: the in-flight state must be
         // shared by every request. It therefore takes no scoped dependency - it gets the root scope factory and creates
         // (and disposes) its own scope for each shared resolution - and stops its work when the host begins to stop.
-        services.AddSingleton<IPlaybackResolutionCoordinator>(serviceProvider => new PlaybackResolutionCoordinator(
-            serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-            serviceProvider.GetRequiredService<IOptions<PlaybackResolutionOptions>>(),
-            serviceProvider.GetRequiredService<TimeProvider>(),
-            serviceProvider.GetRequiredService<ILogger<PlaybackResolutionCoordinator>>(),
-            serviceProvider.GetRequiredService<IHostApplicationLifetime>().ApplicationStopping));
+        services.AddSingleton<IEpisodePlaybackResolutionCoordinator>(
+            serviceProvider =>
+                new EpisodePlaybackResolutionCoordinator(
+                    serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+                    serviceProvider.GetRequiredService<IOptions<PlaybackResolutionOptions>>(),
+                    serviceProvider.GetRequiredService<PlaybackResolutionCapacity>(),
+                    serviceProvider.GetRequiredService<TimeProvider>(),
+                    serviceProvider.GetRequiredService<
+                        ILogger<EpisodePlaybackResolutionCoordinator>>(),
+                    serviceProvider
+                        .GetRequiredService<IHostApplicationLifetime>()
+                        .ApplicationStopping));
 
         services.AddHandlersFromAssembly(typeof(AddSeriesCommand).Assembly);
         services.AddValidatorsFromAssembly(typeof(AddSeriesCommand).Assembly, includeInternalTypes: true);

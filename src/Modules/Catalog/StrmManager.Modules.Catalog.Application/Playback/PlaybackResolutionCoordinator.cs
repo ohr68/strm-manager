@@ -28,39 +28,37 @@ namespace StrmManager.Modules.Catalog.Application.Playback;
 /// unchanged. Nothing here logs, formats or serializes it; the registry key is the movie Guid alone; an unexpected
 /// exception is reduced to its TYPE NAME (its message may contain a URL) and reported as a generic Faulted outcome.
 /// </summary>
-public sealed partial class PlaybackResolutionCoordinator : IPlaybackResolutionCoordinator, IDisposable
+public sealed partial class PlaybackResolutionCoordinator : IPlaybackResolutionCoordinator
 {
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly PlaybackResolutionOptions _options;
+    private readonly PlaybackResolutionCapacity _capacity;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<PlaybackResolutionCoordinator> _logger;
     private readonly CancellationToken _shutdown;
-    private readonly SemaphoreSlim _slots;
     private readonly SingleFlightGroup<Guid, PlaybackCoordinationResult> _flights = new();
 
     /// <param name="shutdownToken">Cancelled when the application begins to stop (the host's ApplicationStopping).</param>
     public PlaybackResolutionCoordinator(
         IServiceScopeFactory scopeFactory,
         IOptions<PlaybackResolutionOptions> options,
+        PlaybackResolutionCapacity capacity,
         TimeProvider timeProvider,
         ILogger<PlaybackResolutionCoordinator> logger,
         CancellationToken shutdownToken)
     {
         _scopeFactory = scopeFactory;
         _options = options.Value;
+        _capacity = capacity;
         _timeProvider = timeProvider;
         _logger = logger;
         _shutdown = shutdownToken;
-        _slots = new SemaphoreSlim(_options.MaxConcurrentResolutions, _options.MaxConcurrentResolutions);
     }
 
     /// <summary>How many resolutions are in flight (queued for a slot or executing). A count only - no keys, no results.</summary>
     public int InFlightCount => _flights.Count;
 
     public override string ToString() => nameof(PlaybackResolutionCoordinator);
-
-    /// <summary>Releases the slot semaphore when the container disposes this singleton at host shutdown.</summary>
-    public void Dispose() => _slots.Dispose();
 
     public async Task<PlaybackCoordinationResult> ResolveAsync(Guid movieId, CancellationToken waiterToken)
     {
@@ -170,7 +168,7 @@ public sealed partial class PlaybackResolutionCoordinator : IPlaybackResolutionC
         {
             try
             {
-                _slots.Release();
+                _capacity.Release();
             }
             catch (ObjectDisposedException)
             {
@@ -185,7 +183,7 @@ public sealed partial class PlaybackResolutionCoordinator : IPlaybackResolutionC
         _shutdown.ThrowIfCancellationRequested();
 
         // A free slot is taken at once, so a zero queue wait means "never queue" rather than "always refuse".
-        if (_slots.Wait(0))
+        if (_capacity.TryAcquireImmediately())
         {
             return true;
         }
@@ -195,7 +193,7 @@ public sealed partial class PlaybackResolutionCoordinator : IPlaybackResolutionC
 
         try
         {
-            await _slots.WaitAsync(admission.Token);
+            await _capacity.AcquireAsync(admission.Token);
             return true;
         }
         catch (OperationCanceledException) when (!_shutdown.IsCancellationRequested)

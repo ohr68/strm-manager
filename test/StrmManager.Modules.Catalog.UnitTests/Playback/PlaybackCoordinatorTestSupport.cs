@@ -249,9 +249,20 @@ internal sealed class CoordinatorHarness : IDisposable
             .AddScoped<IPlaybackResolver>(scope => Probe.Create(scope))
             .BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true, ValidateOnBuild = true });
 
+        var playbackOptions = Options.Create(
+            new PlaybackResolutionOptions
+            {
+                MaxConcurrentResolutions = maxConcurrent,
+                QueueWait = QueueWait,
+                ResolutionBudget = Budget,
+            });
+
+        Capacity = new PlaybackResolutionCapacity(playbackOptions);
+
         Coordinator = new PlaybackResolutionCoordinator(
             Root.GetRequiredService<IServiceScopeFactory>(),
-            Options.Create(new PlaybackResolutionOptions { MaxConcurrentResolutions = maxConcurrent, QueueWait = QueueWait, ResolutionBudget = Budget }),
+            playbackOptions,
+            Capacity,
             Time,
             Logger,
             Shutdown.Token);
@@ -270,6 +281,8 @@ internal sealed class CoordinatorHarness : IDisposable
     public CancellationTokenSource Shutdown { get; } = new();
 
     public ServiceProvider Root { get; }
+
+    public PlaybackResolutionCapacity Capacity { get; }
 
     public PlaybackResolutionCoordinator Coordinator { get; }
 
@@ -317,7 +330,7 @@ internal sealed class CoordinatorHarness : IDisposable
     public void Dispose()
     {
         Shutdown.Dispose();
-        Coordinator.Dispose();
+        Capacity.Dispose();
         Root.Dispose();
     }
 }

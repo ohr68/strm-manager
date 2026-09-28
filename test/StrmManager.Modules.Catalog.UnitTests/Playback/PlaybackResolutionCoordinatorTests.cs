@@ -618,13 +618,36 @@ public class PlaybackResolutionCoordinatorTests
     {
         // With scope validation on, registering a singleton that captured a scoped service fails at build/resolve time.
         var services = new ServiceCollection();
-        var probe = new ResolverProbe { Behavior = (_, _) => Task.FromResult<PlaybackResolutionResult>(Resolved("x")) };
-        services.AddScoped<IPlaybackResolver>(scope => probe.Create(scope));
-        services.AddSingleton<IPlaybackResolutionCoordinator>(sp => new PlaybackResolutionCoordinator(
-            sp.GetRequiredService<IServiceScopeFactory>(), Options.Create(new PlaybackResolutionOptions()), TimeProvider.System,
-            NullLogger<PlaybackResolutionCoordinator>.Instance, CancellationToken.None));
 
-        using ServiceProvider provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true, ValidateOnBuild = true });
+        var probe = new ResolverProbe
+        {
+            Behavior = (_, _) =>
+                Task.FromResult<PlaybackResolutionResult>(Resolved("x")),
+        };
+
+        services.AddScoped<IPlaybackResolver>(
+            scope => probe.Create(scope));
+
+        services.AddSingleton<PlaybackResolutionCapacity>(
+            _ => new PlaybackResolutionCapacity(
+                Options.Create(new PlaybackResolutionOptions())));
+
+        services.AddSingleton<IPlaybackResolutionCoordinator>(
+            sp => new PlaybackResolutionCoordinator(
+                sp.GetRequiredService<IServiceScopeFactory>(),
+                Options.Create(new PlaybackResolutionOptions()),
+                sp.GetRequiredService<PlaybackResolutionCapacity>(),
+                TimeProvider.System,
+                NullLogger<PlaybackResolutionCoordinator>.Instance,
+                CancellationToken.None));
+
+        using ServiceProvider provider =
+            services.BuildServiceProvider(
+                new ServiceProviderOptions
+                {
+                    ValidateScopes = true,
+                    ValidateOnBuild = true,
+                });
 
         IPlaybackResolutionCoordinator fromRoot = provider.GetRequiredService<IPlaybackResolutionCoordinator>();
         using IServiceScope requestA = provider.CreateScope();
