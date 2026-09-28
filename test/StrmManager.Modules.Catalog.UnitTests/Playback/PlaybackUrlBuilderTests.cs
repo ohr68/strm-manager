@@ -68,6 +68,49 @@ public class PlaybackUrlBuilderTests
     }
 
     [Fact]
+    public void BuildEpisode_UsesExactlyTheEpisodeMediaRoute()
+    {
+        Guid episodeId = Guid.Parse("ABCDEF01-2345-6789-ABCD-EF0123456789");
+
+        string url = BuilderFor("http://strm-manager:8080")
+            .BuildEpisode(episodeId)
+            .Value;
+
+        Assert.Equal(
+            "http://strm-manager:8080/media/episodes/abcdef01-2345-6789-abcd-ef0123456789/stream",
+            url);
+    }
+
+    [Fact]
+    public void BuildEpisode_PreservesAnIntentionalBasePath()
+    {
+        Guid episodeId = Guid.Parse("7c1f0c1e-38a4-4d0e-9d7b-2f6a1e5b9c30");
+
+        string url = BuilderFor("https://media.example.com/strm/")
+            .BuildEpisode(episodeId)
+            .Value;
+
+        Assert.Equal(
+            $"https://media.example.com/strm/media/episodes/{episodeId}/stream",
+            url);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("relative/path")]
+    [InlineData("ftp://strm-manager:8080")]
+    [InlineData("http://user:secret@strm-manager:8080")]
+    [InlineData("http://strm-manager:8080/?key=secret")]
+    public void BuildEpisode_UsesTheSamePublicBaseUrlValidationAsMovies(string? configured)
+    {
+        Result<string> result = BuilderFor(configured).BuildEpisode(Guid.NewGuid());
+
+        Assert.True(result.IsFailure);
+        Assert.Equal(PlaybackErrors.PublicBaseUrlInvalid, result.Error);
+    }
+
+    [Fact]
     public void TheUrl_IsDeterministic_AndDiffersOnlyByTheMovieId()
     {
         PlaybackUrlBuilder builder = BuilderFor("https://media.example.com");

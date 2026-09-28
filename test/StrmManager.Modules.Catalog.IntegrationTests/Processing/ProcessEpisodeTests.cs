@@ -1,12 +1,12 @@
 using System.Net;
 using System.Net.Http.Json;
-using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using StrmManager.Common.Domain.Abstractions;
 using StrmManager.Modules.Catalog.Application.Metadata;
+using StrmManager.Modules.Catalog.Application.Playback;
 using StrmManager.Modules.Catalog.Domain.Episodes;
 using StrmManager.Modules.Catalog.Domain.Series;
 using StrmManager.Modules.Catalog.Domain.Shared;
@@ -119,7 +119,9 @@ public class ProcessEpisodeTests : IClassFixture<ApiWebApplicationFactory>
         Assert.Equal("Good Source S01E01", result.SelectedSource!.Name);
         Assert.NotNull(result.StrmPath);
         Assert.True(File.Exists(result.StrmPath));
-        Assert.Equal("https://media.example.test/good", await File.ReadAllTextAsync(result.StrmPath!));
+        Assert.Equal(
+            $"{ApiWebApplicationFactory.TestPublicBaseUrl}/media/episodes/{episodeId}/stream",
+            await File.ReadAllTextAsync(result.StrmPath!));
 
         using IServiceScope scope = _services.CreateScope();
         CatalogDbContext context = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
@@ -259,6 +261,105 @@ public class ProcessEpisodeTests : IClassFixture<ApiWebApplicationFactory>
         CatalogDbContext context = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
         List<SourceAttempt> attempts = await context.Set<SourceAttempt>().Where(a => a.EpisodeId == episodeId).ToListAsync();
         Assert.Single(attempts); // only the first run recorded an attempt
+    }
+
+    [Fact]
+    public async Task ProcessEpisode_MissingPublicBaseUrl_FailsBeforeClaimOrProviderCall()
+    {
+        const string imdbId = "tt00000207";
+
+        var metadataProvider = new FakeMetadataProvider();
+        var streamProvider = new FakeStreamProvider();
+        var mediaValidator = new FakeMediaValidator();
+
+        WebApplicationFactory<Program> isolatedFactory =
+            new ApiWebApplicationFactory().WithWebHostBuilder(builder =>
+                builder.ConfigureTestServices(services =>
+                {
+                    services.AddSingleton<IMetadataProvider>(metadataProvider);
+                    services.AddSingleton<IStreamProvider>(streamProvider);
+                    services.AddSingleton<IMediaValidator>(mediaValidator);
+                    services.Configure<PlaybackOptions>(
+                        options => options.PublicBaseUrl = null);
+                }));
+
+        using HttpClient client = isolatedFactory.CreateClient();
+
+        metadataProvider.Handler = _ =>
+            BuildSingleEpisodeMetadata(
+                imdbId,
+                UtcNow.AddDays(-1),
+                TimeSpan.FromMinutes(52));
+
+        var request = new
+        {
+            ImdbId = imdbId,
+            TmdbId = (string?)null,
+            TvdbId = (string?)null,
+            Title = "Placeholder",
+            OriginalTitle = (string?)null,
+            Year = 2025,
+        };
+
+        HttpResponseMessage createResponse =
+            await client.PostAsJsonAsync("/api/series", request);
+
+        Assert.Equal(HttpStatusCode.Created, createResponse.StatusCode);
+
+        var created =
+            await createResponse.Content.ReadFromJsonAsync<CreatedResponse>();
+
+        Assert.NotNull(created);
+
+        List<SeasonSummary>? seasons =
+            await client.GetFromJsonAsync<List<SeasonSummary>>(
+                $"/api/series/{created.Id}/seasons");
+
+        SeasonSummary season = Assert.Single(seasons!);
+
+        List<EpisodeSummary>? episodes =
+            await client.GetFromJsonAsync<List<EpisodeSummary>>(
+                $"/api/seasons/{season.Id}/episodes");
+
+        EpisodeSummary episode = Assert.Single(episodes!);
+
+        streamProvider.Handler = _ =>
+            throw new InvalidOperationException(
+                "Stream provider must not be called when PublicBaseUrl is missing.");
+
+        HttpResponseMessage response =
+            await client.PostAsync(
+                $"/api/episodes/{episode.Id}/process",
+                content: null);
+
+        Assert.Equal(
+            HttpStatusCode.InternalServerError,
+            response.StatusCode);
+
+        await using AsyncServiceScope scope =
+            isolatedFactory.Services.CreateAsyncScope();
+
+        CatalogDbContext context =
+            scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
+
+        Episode persisted =
+            await context.Set<Episode>()
+                .SingleAsync(e => e.Id == episode.Id);
+
+        Assert.Equal(MediaStatus.Pending, persisted.Status);
+        Assert.Equal(0, persisted.AttemptCount);
+
+        Assert.Empty(
+            await context.Set<SourceAttempt>()
+                .Where(a => a.EpisodeId == episode.Id)
+                .ToListAsync());
+
+        Assert.Equal(
+            PlaybackErrors.PublicBaseUrlInvalid,
+            isolatedFactory.Services
+                .GetRequiredService<IPlaybackUrlBuilder>()
+                .BuildEpisode(episode.Id)
+                .Error);
     }
 
     private sealed record CreatedResponse(Guid Id);

@@ -3,6 +3,7 @@ using Microsoft.Extensions.Options;
 using StrmManager.Common.Application.Messaging;
 using StrmManager.Common.Domain.Abstractions;
 using StrmManager.Modules.Catalog.Application.Abstractions.Data;
+using StrmManager.Modules.Catalog.Application.Playback;
 using StrmManager.Modules.Catalog.Application.Processing;
 using StrmManager.Modules.Catalog.Domain.Episodes;
 using StrmManager.Modules.Catalog.Domain.Seasons;
@@ -38,6 +39,7 @@ internal sealed partial class ProcessEpisodeCommandHandler(
     IStreamProvider streamProvider,
     IMediaValidator mediaValidator,
     IStrmWriter strmWriter,
+    IPlaybackUrlBuilder playbackUrlBuilder,
     IUnitOfWork unitOfWork,
     IOptions<ProcessingOptions> processingOptions,
     TimeProvider timeProvider,
@@ -60,6 +62,14 @@ internal sealed partial class ProcessEpisodeCommandHandler(
             return new ProcessEpisodeResult(
                 episode.Id, MediaStatus.Completed.ToString(), episode.AttemptCount, null,
                 alreadyWrittenStrmFile?.Path, "Episode is already Completed - not reprocessed.");
+        }
+
+        Result<string> stablePlaybackUrl = playbackUrlBuilder.BuildEpisode(episode.Id);
+
+        if (stablePlaybackUrl.IsFailure)
+        {
+            LogPlaybackUrlUnavailable(logger, episode.Id, stablePlaybackUrl.Error.Code);
+            return Result.Failure<ProcessEpisodeResult>(stablePlaybackUrl.Error);
         }
 
         Result startSearchingResult = episode.StartSearching(timeProvider.GetUtcNow().UtcDateTime);
@@ -158,7 +168,10 @@ internal sealed partial class ProcessEpisodeCommandHandler(
         var strmReference = new EpisodeStrmReference(
             catalogContext.Value.Series.Title, catalogContext.Value.Series.Year, episode.SeasonNumber, episode.EpisodeNumber);
 
-        Result<string> writeResult = await strmWriter.WriteEpisodeAsync(strmReference, approvedCandidate.Url, cancellationToken);
+        Result<string> writeResult = await strmWriter.WriteEpisodeAsync(
+            strmReference,
+            stablePlaybackUrl.Value,
+            cancellationToken);
 
         if (writeResult.IsFailure)
         {
@@ -270,4 +283,12 @@ internal sealed partial class ProcessEpisodeCommandHandler(
 
     [LoggerMessage(Level = LogLevel.Error, Message = "Episode {EpisodeId} marked Error: {Reason}")]
     private static partial void LogEpisodeError(ILogger logger, Guid episodeId, string reason);
+
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "Episode {EpisodeId} was not processed: no stable playback URL can be built ({ErrorCode}); nothing was claimed")]
+    private static partial void LogPlaybackUrlUnavailable(
+        ILogger logger,
+        Guid episodeId,
+        string errorCode);
 }

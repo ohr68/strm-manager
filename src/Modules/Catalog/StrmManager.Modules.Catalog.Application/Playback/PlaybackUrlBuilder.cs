@@ -4,17 +4,24 @@ using StrmManager.Common.Domain.Abstractions;
 namespace StrmManager.Modules.Catalog.Application.Playback;
 
 /// <summary>
-/// Appends exactly "/media/{movieId}/stream" to the configured PublicBaseUrl. It normalizes only what is needed to do that safely:
-/// surrounding whitespace and trailing slashes are dropped (no double slash before "media"), while a deliberate base path such as
-/// https://host/strm is kept. It refuses a base URL that is not an absolute http/https URL with a host, or that carries credentials
-/// (which would end up in a .strm file), a query or a fragment (which would swallow the appended route).
+/// Builds stable playback URLs from Playback:PublicBaseUrl.
 ///
-/// Its only inputs are <see cref="PlaybackOptions"/> and the movie id: no HttpContext, no request Host or forwarded headers, no
-/// provider data.
+/// The configured base URL is normalized only as needed to append a playback
+/// route safely. Surrounding whitespace and trailing slashes are removed,
+/// while a deliberate base path such as https://host/strm is preserved.
+///
+/// The base URL must be an absolute http/https URL with a host and must not
+/// contain credentials, query or fragment.
 /// </summary>
 public sealed class PlaybackUrlBuilder(IOptions<PlaybackOptions> options) : IPlaybackUrlBuilder
 {
-    public Result<string> Build(Guid movieId)
+    public Result<string> Build(Guid movieId) =>
+        BuildUrl($"media/{movieId:D}/stream");
+
+    public Result<string> BuildEpisode(Guid episodeId) =>
+        BuildUrl($"media/episodes/{episodeId:D}/stream");
+
+    private Result<string> BuildUrl(string relativePath)
     {
         string? configured = options.Value.PublicBaseUrl?.Trim();
 
@@ -31,6 +38,6 @@ public sealed class PlaybackUrlBuilder(IOptions<PlaybackOptions> options) : IPla
 
         string basePath = baseUri.AbsolutePath.TrimEnd('/');
 
-        return $"{baseUri.GetLeftPart(UriPartial.Authority)}{basePath}/media/{movieId:D}/stream";
+        return $"{baseUri.GetLeftPart(UriPartial.Authority)}{basePath}/{relativePath}";
     }
 }
