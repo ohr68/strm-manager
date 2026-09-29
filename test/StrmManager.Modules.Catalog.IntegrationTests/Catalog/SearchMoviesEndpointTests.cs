@@ -125,6 +125,12 @@ public sealed class SearchMoviesEndpointTests : IClassFixture<ApiWebApplicationF
         public Task<Result<IReadOnlyList<CatalogMovie>>> GetPopularMoviesAsync(int limit, CancellationToken cancellationToken = default) =>
             throw new NotSupportedException("The search endpoint must not call GetPopularMoviesAsync.");
 
+        public Task<Result<IReadOnlyList<CatalogSeries>>> GetPopularSeriesAsync(
+            int limit,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult<Result<IReadOnlyList<CatalogSeries>>>(
+                Array.Empty<CatalogSeries>());
+
         public Task<Result<IReadOnlyList<CatalogMovie>>> SearchMoviesAsync(string query, int limit, CancellationToken cancellationToken = default)
         {
             CallCount++;

@@ -23,7 +23,8 @@ internal sealed partial class CinemetaCatalogProvider(HttpClient httpClient, ILo
 
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
 
-    public async Task<Result<IReadOnlyList<CatalogMovie>>> GetPopularMoviesAsync(int limit, CancellationToken cancellationToken = default)
+    public async Task<Result<IReadOnlyList<CatalogMovie>>> GetPopularMoviesAsync(int limit,
+        CancellationToken cancellationToken = default)
     {
         Stopwatch stopwatch = Stopwatch.StartNew();
 
@@ -34,7 +35,8 @@ internal sealed partial class CinemetaCatalogProvider(HttpClient httpClient, ILo
             if (!response.IsSuccessStatusCode)
             {
                 LogUnexpectedStatus(logger, (int)response.StatusCode, stopwatch.ElapsedMilliseconds);
-                return Result.Failure<IReadOnlyList<CatalogMovie>>(MetadataProviderErrors.ProviderUnavailable(ProviderName));
+                return Result.Failure<IReadOnlyList<CatalogMovie>>(
+                    MetadataProviderErrors.ProviderUnavailable(ProviderName));
             }
 
             CinemetaCatalogResponseDto? payload = await response.Content.ReadFromJsonAsync<CinemetaCatalogResponseDto>(
@@ -44,7 +46,8 @@ internal sealed partial class CinemetaCatalogProvider(HttpClient httpClient, ILo
             if (payload?.Metas is null)
             {
                 LogInvalidResponse(logger, "missing metas array");
-                return Result.Failure<IReadOnlyList<CatalogMovie>>(MetadataProviderErrors.InvalidResponse(ProviderName, "missing metas array"));
+                return Result.Failure<IReadOnlyList<CatalogMovie>>(
+                    MetadataProviderErrors.InvalidResponse(ProviderName, "missing metas array"));
             }
 
             List<CatalogMovie> movies = payload.Metas
@@ -70,12 +73,113 @@ internal sealed partial class CinemetaCatalogProvider(HttpClient httpClient, ILo
         catch (HttpRequestException exception)
         {
             LogProviderUnreachable(logger, exception.Message);
-            return Result.Failure<IReadOnlyList<CatalogMovie>>(MetadataProviderErrors.ProviderUnavailable(ProviderName));
+            return Result.Failure<IReadOnlyList<CatalogMovie>>(
+                MetadataProviderErrors.ProviderUnavailable(ProviderName));
         }
         catch (JsonException exception)
         {
             LogInvalidResponse(logger, exception.Message);
-            return Result.Failure<IReadOnlyList<CatalogMovie>>(MetadataProviderErrors.InvalidResponse(ProviderName, "malformed JSON"));
+            return Result.Failure<IReadOnlyList<CatalogMovie>>(
+                MetadataProviderErrors.InvalidResponse(ProviderName, "malformed JSON"));
+        }
+    }
+
+    public async Task<Result<IReadOnlyList<CatalogSeries>>> GetPopularSeriesAsync(
+        int limit,
+        CancellationToken cancellationToken = default)
+    {
+        Stopwatch stopwatch = Stopwatch.StartNew();
+
+        try
+        {
+            using HttpResponseMessage response =
+                await httpClient.GetAsync(
+                    "catalog/series/top.json",
+                    cancellationToken);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                LogPopularSeriesUnexpectedStatus(
+                    logger,
+                    (int)response.StatusCode,
+                    stopwatch.ElapsedMilliseconds);
+
+                return Result.Failure<IReadOnlyList<CatalogSeries>>(
+                    MetadataProviderErrors.ProviderUnavailable(
+                        ProviderName));
+            }
+
+            CinemetaCatalogResponseDto? payload =
+                await response.Content
+                    .ReadFromJsonAsync<CinemetaCatalogResponseDto>(
+                        SerializerOptions,
+                        cancellationToken);
+
+            if (payload?.Metas is null)
+            {
+                LogPopularSeriesInvalidResponse(
+                    logger,
+                    "missing metas array");
+
+                return Result.Failure<IReadOnlyList<CatalogSeries>>(
+                    MetadataProviderErrors.InvalidResponse(
+                        ProviderName,
+                        "missing metas array"));
+            }
+
+            List<CatalogSeries> series = payload.Metas
+                .Select(CinemetaCatalogSeriesMapper.Map)
+                .Where(item => item is not null)
+                .Select(item => item!)
+                .Take(limit)
+                .ToList();
+
+            LogPopularSeriesRetrieved(
+                logger,
+                series.Count,
+                stopwatch.ElapsedMilliseconds);
+
+            return series;
+        }
+        catch (TimeoutRejectedException)
+        {
+            LogPopularSeriesTimeout(
+                logger,
+                stopwatch.ElapsedMilliseconds);
+
+            return Result.Failure<IReadOnlyList<CatalogSeries>>(
+                MetadataProviderErrors.Timeout(ProviderName));
+        }
+        catch (OperationCanceledException)
+            when (!cancellationToken.IsCancellationRequested)
+        {
+            LogPopularSeriesTimeout(
+                logger,
+                stopwatch.ElapsedMilliseconds);
+
+            return Result.Failure<IReadOnlyList<CatalogSeries>>(
+                MetadataProviderErrors.Timeout(ProviderName));
+        }
+        catch (HttpRequestException exception)
+        {
+            LogPopularSeriesProviderUnreachable(
+                logger,
+                exception.Message);
+
+            return Result.Failure<IReadOnlyList<CatalogSeries>>(
+                MetadataProviderErrors.ProviderUnavailable(
+                    ProviderName));
+        }
+        catch (JsonException exception)
+        {
+            LogPopularSeriesInvalidResponse(
+                logger,
+                exception.Message);
+
+            return Result.Failure<IReadOnlyList<CatalogSeries>>(
+                MetadataProviderErrors.InvalidResponse(
+                    ProviderName,
+                    "malformed JSON"));
         }
     }
 
@@ -86,7 +190,8 @@ internal sealed partial class CinemetaCatalogProvider(HttpClient httpClient, ILo
     /// client-side. The query text itself is never logged (only counts/timing), matching this provider's existing
     /// logging shape.
     /// </summary>
-    public async Task<Result<IReadOnlyList<CatalogMovie>>> SearchMoviesAsync(string query, int limit, CancellationToken cancellationToken = default)
+    public async Task<Result<IReadOnlyList<CatalogMovie>>> SearchMoviesAsync(string query, int limit,
+        CancellationToken cancellationToken = default)
     {
         Stopwatch stopwatch = Stopwatch.StartNew();
         string requestUri = $"catalog/movie/top/search={Uri.EscapeDataString(query)}.json";
@@ -98,7 +203,8 @@ internal sealed partial class CinemetaCatalogProvider(HttpClient httpClient, ILo
             if (!response.IsSuccessStatusCode)
             {
                 LogSearchUnexpectedStatus(logger, (int)response.StatusCode, stopwatch.ElapsedMilliseconds);
-                return Result.Failure<IReadOnlyList<CatalogMovie>>(MetadataProviderErrors.ProviderUnavailable(ProviderName));
+                return Result.Failure<IReadOnlyList<CatalogMovie>>(
+                    MetadataProviderErrors.ProviderUnavailable(ProviderName));
             }
 
             CinemetaCatalogResponseDto? payload = await response.Content.ReadFromJsonAsync<CinemetaCatalogResponseDto>(
@@ -108,7 +214,8 @@ internal sealed partial class CinemetaCatalogProvider(HttpClient httpClient, ILo
             if (payload?.Metas is null)
             {
                 LogSearchInvalidResponse(logger, "missing metas array");
-                return Result.Failure<IReadOnlyList<CatalogMovie>>(MetadataProviderErrors.InvalidResponse(ProviderName, "missing metas array"));
+                return Result.Failure<IReadOnlyList<CatalogMovie>>(
+                    MetadataProviderErrors.InvalidResponse(ProviderName, "missing metas array"));
             }
 
             List<CatalogMovie> movies = payload.Metas
@@ -134,34 +241,42 @@ internal sealed partial class CinemetaCatalogProvider(HttpClient httpClient, ILo
         catch (HttpRequestException exception)
         {
             LogSearchProviderUnreachable(logger, exception.Message);
-            return Result.Failure<IReadOnlyList<CatalogMovie>>(MetadataProviderErrors.ProviderUnavailable(ProviderName));
+            return Result.Failure<IReadOnlyList<CatalogMovie>>(
+                MetadataProviderErrors.ProviderUnavailable(ProviderName));
         }
         catch (JsonException exception)
         {
             LogSearchInvalidResponse(logger, exception.Message);
-            return Result.Failure<IReadOnlyList<CatalogMovie>>(MetadataProviderErrors.InvalidResponse(ProviderName, "malformed JSON"));
+            return Result.Failure<IReadOnlyList<CatalogMovie>>(
+                MetadataProviderErrors.InvalidResponse(ProviderName, "malformed JSON"));
         }
     }
 
-    [LoggerMessage(Level = LogLevel.Information, Message = "Retrieved {MovieCount} popular movies from Cinemeta in {ElapsedMs}ms")]
+    [LoggerMessage(Level = LogLevel.Information,
+        Message = "Retrieved {MovieCount} popular movies from Cinemeta in {ElapsedMs}ms")]
     private static partial void LogCatalogRetrieved(ILogger logger, int movieCount, long elapsedMs);
 
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Cinemeta popular movies catalog returned status {StatusCode} ({ElapsedMs}ms)")]
+    [LoggerMessage(Level = LogLevel.Warning,
+        Message = "Cinemeta popular movies catalog returned status {StatusCode} ({ElapsedMs}ms)")]
     private static partial void LogUnexpectedStatus(ILogger logger, int statusCode, long elapsedMs);
 
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Cinemeta popular movies catalog request timed out after {ElapsedMs}ms")]
+    [LoggerMessage(Level = LogLevel.Warning,
+        Message = "Cinemeta popular movies catalog request timed out after {ElapsedMs}ms")]
     private static partial void LogTimeout(ILogger logger, long elapsedMs);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Cinemeta popular movies catalog request failed: {Reason}")]
     private static partial void LogProviderUnreachable(ILogger logger, string reason);
 
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Cinemeta popular movies catalog returned an invalid response: {Reason}")]
+    [LoggerMessage(Level = LogLevel.Warning,
+        Message = "Cinemeta popular movies catalog returned an invalid response: {Reason}")]
     private static partial void LogInvalidResponse(ILogger logger, string reason);
 
-    [LoggerMessage(Level = LogLevel.Information, Message = "Retrieved {MovieCount} movie search results from Cinemeta in {ElapsedMs}ms")]
+    [LoggerMessage(Level = LogLevel.Information,
+        Message = "Retrieved {MovieCount} movie search results from Cinemeta in {ElapsedMs}ms")]
     private static partial void LogSearchRetrieved(ILogger logger, int movieCount, long elapsedMs);
 
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Cinemeta movie search returned status {StatusCode} ({ElapsedMs}ms)")]
+    [LoggerMessage(Level = LogLevel.Warning,
+        Message = "Cinemeta movie search returned status {StatusCode} ({ElapsedMs}ms)")]
     private static partial void LogSearchUnexpectedStatus(ILogger logger, int statusCode, long elapsedMs);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Cinemeta movie search request timed out after {ElapsedMs}ms")]
@@ -172,4 +287,41 @@ internal sealed partial class CinemetaCatalogProvider(HttpClient httpClient, ILo
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Cinemeta movie search returned an invalid response: {Reason}")]
     private static partial void LogSearchInvalidResponse(ILogger logger, string reason);
+
+    [LoggerMessage(
+        Level = LogLevel.Information,
+        Message = "Retrieved {SeriesCount} popular series from Cinemeta in {ElapsedMs}ms")]
+    private static partial void LogPopularSeriesRetrieved(
+        ILogger logger,
+        int seriesCount,
+        long elapsedMs);
+
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "Cinemeta popular series catalog returned status {StatusCode} ({ElapsedMs}ms)")]
+    private static partial void LogPopularSeriesUnexpectedStatus(
+        ILogger logger,
+        int statusCode,
+        long elapsedMs);
+
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "Cinemeta popular series catalog request timed out after {ElapsedMs}ms")]
+    private static partial void LogPopularSeriesTimeout(
+        ILogger logger,
+        long elapsedMs);
+
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "Cinemeta popular series catalog request failed: {Reason}")]
+    private static partial void LogPopularSeriesProviderUnreachable(
+        ILogger logger,
+        string reason);
+
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "Cinemeta popular series catalog returned an invalid response: {Reason}")]
+    private static partial void LogPopularSeriesInvalidResponse(
+        ILogger logger,
+        string reason);
 }

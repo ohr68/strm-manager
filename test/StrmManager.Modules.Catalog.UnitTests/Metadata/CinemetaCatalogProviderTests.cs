@@ -223,4 +223,109 @@ public class CinemetaCatalogProviderTests
         Assert.Single(result.Value);
         Assert.Equal("tt0468569", result.Value[0].ExternalId);
     }
+
+    [Fact]
+    public async Task GetPopularSeriesAsync_SuccessfulResponse_ReturnsMappedSeries()
+    {
+        const string body = """
+            {
+              "metas": [
+                {
+                  "id": "tt0903747",
+                  "name": "Breaking Bad",
+                  "releaseInfo": "2008-2013",
+                  "poster": "https://images.example.invalid/breaking-bad.jpg",
+                  "genre": ["Crime", "Drama", "Thriller"]
+                }
+              ]
+            }
+            """;
+
+        var handler = new FakeHttpMessageHandler(
+            (_, _) => Task.FromResult(
+                new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(body),
+                }));
+
+        Result<IReadOnlyList<CatalogSeries>> result =
+            await CreateProvider(handler)
+                .GetPopularSeriesAsync(20);
+
+        Assert.True(result.IsSuccess);
+
+        CatalogSeries series =
+            Assert.Single(result.Value);
+
+        Assert.Equal("tt0903747", series.ExternalId);
+        Assert.Equal("Breaking Bad", series.Title);
+        Assert.Equal(2008, series.Year);
+        Assert.Equal(
+            "https://images.example.invalid/breaking-bad.jpg",
+            series.PosterUrl);
+        Assert.Equal(
+            ["Crime", "Drama", "Thriller"],
+            series.Genres);
+    }
+
+    [Fact]
+    public async Task GetPopularSeriesAsync_RequestsTheSeriesCatalogTopEndpoint()
+    {
+        HttpRequestMessage? captured = null;
+
+        var handler = new FakeHttpMessageHandler(
+            (request, _) =>
+            {
+                captured = request;
+
+                return Task.FromResult(
+                    new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content =
+                            new StringContent(
+                                """{"metas":[]}"""),
+                    });
+            });
+
+        await CreateProvider(handler)
+            .GetPopularSeriesAsync(20);
+
+        Assert.NotNull(captured);
+
+        Assert.Equal(
+            "https://cinemeta.example.invalid/catalog/series/top.json",
+            captured.RequestUri!.AbsoluteUri);
+    }
+
+    [Fact]
+    public async Task GetPopularSeriesAsync_ItemsMissingIdOrName_AreSkipped()
+    {
+        const string body = """
+            {
+              "metas": [
+                {"name":"No Id"},
+                {"id":"tt1"},
+                {"id":"tt2","name":"Valid Series"}
+              ]
+            }
+            """;
+
+        var handler = new FakeHttpMessageHandler(
+            (_, _) => Task.FromResult(
+                new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(body),
+                }));
+
+        Result<IReadOnlyList<CatalogSeries>> result =
+            await CreateProvider(handler)
+                .GetPopularSeriesAsync(20);
+
+        Assert.True(result.IsSuccess);
+
+        CatalogSeries series =
+            Assert.Single(result.Value);
+
+        Assert.Equal("tt2", series.ExternalId);
+    }
 }
