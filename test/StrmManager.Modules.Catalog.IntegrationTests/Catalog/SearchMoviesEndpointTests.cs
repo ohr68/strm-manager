@@ -137,6 +137,13 @@ public sealed class SearchMoviesEndpointTests : IClassFixture<ApiWebApplicationF
             LastQuery = query;
             return Task.FromResult(NextResult);
         }
+
+        public Task<Result<IReadOnlyList<CatalogSeries>>> SearchSeriesAsync(
+            string query,
+            int limit,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException(
+                "This endpoint must not call SearchSeriesAsync.");
     }
 
     private sealed record SearchMoviesResponseBody(List<Movie> Movies);

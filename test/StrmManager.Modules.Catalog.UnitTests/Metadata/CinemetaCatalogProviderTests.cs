@@ -328,4 +328,71 @@ public class CinemetaCatalogProviderTests
 
         Assert.Equal("tt2", series.ExternalId);
     }
+
+    [Fact]
+    public async Task SearchSeriesAsync_SuccessfulResponse_ReturnsMappedSeries()
+    {
+        const string body = """
+                            {
+                              "metas": [
+                                {
+                                  "id": "tt0903747",
+                                  "name": "Breaking Bad",
+                                  "releaseInfo": "2008-2013",
+                                  "poster": "https://images.example.invalid/breaking-bad.jpg",
+                                  "genre": ["Crime", "Drama"]
+                                }
+                              ]
+                            }
+                            """;
+
+        var handler = new FakeHttpMessageHandler(
+            (_, _) => Task.FromResult(
+                new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(body),
+                }));
+
+        Result<IReadOnlyList<CatalogSeries>> result =
+            await CreateProvider(handler)
+                .SearchSeriesAsync("Breaking Bad", 20);
+
+        Assert.True(result.IsSuccess);
+
+        CatalogSeries series =
+            Assert.Single(result.Value);
+
+        Assert.Equal("tt0903747", series.ExternalId);
+        Assert.Equal("Breaking Bad", series.Title);
+        Assert.Equal(2008, series.Year);
+    }
+
+    [Fact]
+    public async Task SearchSeriesAsync_RequestsTheEscapedSeriesSearchEndpoint()
+    {
+        HttpRequestMessage? captured = null;
+
+        var handler = new FakeHttpMessageHandler(
+            (request, _) =>
+            {
+                captured = request;
+
+                return Task.FromResult(
+                    new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content =
+                            new StringContent(
+                                """{"metas":[]}"""),
+                    });
+            });
+
+        await CreateProvider(handler)
+            .SearchSeriesAsync("Star Trek", 20);
+
+        Assert.NotNull(captured);
+
+        Assert.Equal(
+            "https://cinemeta.example.invalid/catalog/series/top/search=Star%20Trek.json",
+            captured.RequestUri!.AbsoluteUri);
+    }
 }

@@ -22,4 +22,13 @@ public interface ICatalogProvider
     /// implementation (UI-5a). No results is a successful empty list, never a failure.
     /// </summary>
     Task<Result<IReadOnlyList<CatalogMovie>>> SearchMoviesAsync(string query, int limit, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Free-text series search. No results is a successful empty list,
+    /// never a failure.
+    /// </summary>
+    Task<Result<IReadOnlyList<CatalogSeries>>> SearchSeriesAsync(
+        string query,
+        int limit,
+        CancellationToken cancellationToken = default);
 }

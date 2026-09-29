@@ -134,6 +134,13 @@ public sealed class GetPopularSeriesEndpointTests
                 CancellationToken cancellationToken = default) =>
             throw new NotSupportedException(
                 "The popular series endpoint must not call SearchMoviesAsync.");
+
+        public Task<Result<IReadOnlyList<CatalogSeries>>> SearchSeriesAsync(
+            string query,
+            int limit,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException(
+                "This endpoint must not call SearchSeriesAsync.");
     }
 
     private sealed record PopularSeriesResponseBody(
