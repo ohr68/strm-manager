@@ -66,16 +66,11 @@ public class MetadataSynchronizationTests : IClassFixture<ApiWebApplicationFacto
             episodes);
     }
 
-    private async Task<(Guid SeriesId, string ImdbId)> AddSeriesAsync(string imdbId, string title)
+    private async Task<(Guid SeriesId, string ImdbId)> AddSeriesAsync(string imdbId)
     {
         var request = new
         {
             ImdbId = imdbId,
-            TmdbId = (string?)null,
-            TvdbId = (string?)null,
-            Title = title,
-            OriginalTitle = (string?)null,
-            Year = 2026,
         };
 
         HttpResponseMessage response = await _client.PostAsJsonAsync("/api/series", request);
@@ -93,7 +88,7 @@ public class MetadataSynchronizationTests : IClassFixture<ApiWebApplicationFacto
         const string imdbId = "tt00000101";
         _fakeMetadataProvider.Handler = _ => BuildStuartMetadataWithImdbId(imdbId, episodeCount: 10);
 
-        (Guid seriesId, _) = await AddSeriesAsync(imdbId, "Placeholder Title");
+        (Guid seriesId, _) = await AddSeriesAsync(imdbId);
 
         HttpResponseMessage seasonsResponse = await _client.GetAsync($"/api/series/{seriesId}/seasons");
         Assert.Equal(HttpStatusCode.OK, seasonsResponse.StatusCode);
@@ -117,24 +112,34 @@ public class MetadataSynchronizationTests : IClassFixture<ApiWebApplicationFacto
     }
 
     [Fact]
-    public async Task AddSeries_WhenMetadataProviderFails_StillCreatesSeriesWithoutEpisodes()
+    public async Task AddSeries_WhenMetadataProviderFails_DoesNotCreateSeries()
     {
         const string imdbId = "tt00000102";
+
         _fakeMetadataProvider.Handler = externalId =>
-            Result.Failure<SeriesMetadata>(MetadataProviderErrors.SeriesNotFound("Fake", externalId));
+            Result.Failure<SeriesMetadata>(
+                MetadataProviderErrors.SeriesNotFound("Fake", externalId));
 
-        (Guid seriesId, _) = await AddSeriesAsync(imdbId, "Caller Supplied Title");
+        var request = new
+        {
+            ImdbId = imdbId,
+        };
 
-        HttpResponseMessage seriesResponse = await _client.GetAsync($"/api/series/{seriesId}");
-        Assert.Equal(HttpStatusCode.OK, seriesResponse.StatusCode);
-        var series = await seriesResponse.Content.ReadFromJsonAsync<SeriesSummary>();
-        Assert.NotNull(series);
-        Assert.Equal("Caller Supplied Title", series.Title); // untouched - provider never responded
+        HttpResponseMessage response =
+            await _client.PostAsJsonAsync("/api/series", request);
 
-        HttpResponseMessage seasonsResponse = await _client.GetAsync($"/api/series/{seriesId}/seasons");
-        var seasons = await seasonsResponse.Content.ReadFromJsonAsync<List<SeasonSummary>>();
-        Assert.NotNull(seasons);
-        Assert.Empty(seasons);
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+
+        using IServiceScope scope = _services.CreateScope();
+
+        CatalogDbContext context =
+            scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
+
+        bool seriesExists =
+            await context.Set<StrmManager.Modules.Catalog.Domain.Series.Series>()
+                .AnyAsync(series => series.ExternalIds.ImdbId == imdbId);
+
+        Assert.False(seriesExists);
     }
 
     [Fact]
@@ -143,7 +148,7 @@ public class MetadataSynchronizationTests : IClassFixture<ApiWebApplicationFacto
         const string imdbId = "tt00000103";
         _fakeMetadataProvider.Handler = _ => BuildStuartMetadataWithImdbId(imdbId, episodeCount: 10);
 
-        (Guid seriesId, _) = await AddSeriesAsync(imdbId, "Placeholder");
+        (Guid seriesId, _) = await AddSeriesAsync(imdbId);
 
         HttpResponseMessage firstRefresh = await _client.PostAsync($"/api/series/{seriesId}/refresh", content: null);
         Assert.Equal(HttpStatusCode.OK, firstRefresh.StatusCode);
@@ -177,7 +182,7 @@ public class MetadataSynchronizationTests : IClassFixture<ApiWebApplicationFacto
         const string imdbId = "tt00000104";
         _fakeMetadataProvider.Handler = _ => BuildStuartMetadataWithImdbId(imdbId, episodeCount: 10);
 
-        (Guid seriesId, _) = await AddSeriesAsync(imdbId, "Placeholder");
+        (Guid seriesId, _) = await AddSeriesAsync(imdbId);
 
         _fakeMetadataProvider.Handler = _ => BuildStuartMetadataWithImdbId(imdbId, episodeCount: 11);
 
@@ -205,7 +210,7 @@ public class MetadataSynchronizationTests : IClassFixture<ApiWebApplicationFacto
         const string imdbId = "tt00000105";
         _fakeMetadataProvider.Handler = _ => BuildStuartMetadataWithImdbId(imdbId, episodeCount: 10);
 
-        (Guid seriesId, _) = await AddSeriesAsync(imdbId, "Placeholder");
+        (Guid seriesId, _) = await AddSeriesAsync(imdbId);
 
         Guid episode01Id = await MarkFirstEpisodeCompletedAsync(seriesId);
 
@@ -229,7 +234,7 @@ public class MetadataSynchronizationTests : IClassFixture<ApiWebApplicationFacto
         const string imdbId = "tt00000106";
         _fakeMetadataProvider.Handler = _ => BuildStuartMetadataWithImdbId(imdbId, episodeCount: 10);
 
-        (Guid seriesId, _) = await AddSeriesAsync(imdbId, "Placeholder");
+        (Guid seriesId, _) = await AddSeriesAsync(imdbId);
 
         Guid episode01Id = await MarkFirstEpisodeUnavailableAsync(seriesId);
 

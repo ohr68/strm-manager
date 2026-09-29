@@ -7,7 +7,5 @@ internal sealed class AddSeriesCommandValidator : AbstractValidator<AddSeriesCom
     public AddSeriesCommandValidator()
     {
         RuleFor(c => c.ImdbId).NotEmpty();
-        RuleFor(c => c.Title).NotEmpty();
-        RuleFor(c => c.Year).InclusiveBetween(1870, 2200);
     }
 }

@@ -21,13 +21,7 @@ internal sealed class AddSeries : IEndpoint
             ICommandHandler<AddSeriesCommand, Guid> handler,
             CancellationToken cancellationToken) =>
         {
-            var command = new AddSeriesCommand(
-                request.ImdbId,
-                request.TmdbId,
-                request.TvdbId,
-                request.Title,
-                request.OriginalTitle,
-                request.Year);
+            var command = new AddSeriesCommand(request.ImdbId);
 
             Result<Guid> result = await handler.HandleValidated(command, validator, cancellationToken);
 
@@ -40,15 +34,5 @@ internal sealed class AddSeries : IEndpoint
     internal sealed class Request
     {
         public required string ImdbId { get; init; }
-
-        public string? TmdbId { get; init; }
-
-        public string? TvdbId { get; init; }
-
-        public required string Title { get; init; }
-
-        public string? OriginalTitle { get; init; }
-
-        public required int Year { get; init; }
     }
 }
