@@ -149,6 +149,118 @@ public class SeriesEndpointsTests : IClassFixture<ApiWebApplicationFactory>
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
 
+    [Fact]
+    public async Task GetSeriesByImdbId_WhenSeriesExists_ReturnsSeries()
+    {
+        const string imdbId = "tt27497393";
+
+        _metadataProvider.Handler = _ =>
+            BuildMetadata(
+                imdbId,
+                title: "Paradise",
+                year: 2025);
+
+        HttpResponseMessage postResponse =
+            await _client.PostAsJsonAsync(
+                "/api/series",
+                new AddSeriesRequest(imdbId));
+
+        Assert.Equal(HttpStatusCode.Created, postResponse.StatusCode);
+
+        CreatedResponse? created =
+            await postResponse.Content.ReadFromJsonAsync<CreatedResponse>();
+
+        Assert.NotNull(created);
+
+        HttpResponseMessage response =
+            await _client.GetAsync(
+                $"/api/series/by-imdb/{imdbId}");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        SeriesResponse? series =
+            await response.Content.ReadFromJsonAsync<SeriesResponse>();
+
+        Assert.NotNull(series);
+        Assert.Equal(created.Id, series.Id);
+        Assert.Equal(imdbId, series.ImdbId);
+        Assert.Equal("Paradise", series.Title);
+        Assert.Equal(2025, series.Year);
+        Assert.Equal("Active", series.Status);
+    }
+
+    [Fact]
+    public async Task GetSeriesByImdbId_ReturnsSameRepresentationAsGetById()
+    {
+        const string imdbId = "tt87654321";
+
+        _metadataProvider.Handler = _ =>
+            BuildMetadata(
+                imdbId,
+                title: "Equivalent Series",
+                year: 2024);
+
+        HttpResponseMessage postResponse =
+            await _client.PostAsJsonAsync(
+                "/api/series",
+                new AddSeriesRequest(imdbId));
+
+        Assert.Equal(HttpStatusCode.Created, postResponse.StatusCode);
+
+        CreatedResponse? created =
+            await postResponse.Content.ReadFromJsonAsync<CreatedResponse>();
+
+        Assert.NotNull(created);
+
+        string byId =
+            await (
+                await _client.GetAsync(
+                    $"/api/series/{created.Id}")
+            ).Content.ReadAsStringAsync();
+
+        string byImdb =
+            await (
+                await _client.GetAsync(
+                    $"/api/series/by-imdb/{imdbId}")
+            ).Content.ReadAsStringAsync();
+
+        Assert.Equal(byId, byImdb);
+    }
+
+    [Fact]
+    public async Task GetSeriesByImdbId_WhenSeriesDoesNotExist_Returns404()
+    {
+        const string imdbId = "tt70000001";
+
+        HttpResponseMessage firstResponse =
+            await _client.GetAsync(
+                $"/api/series/by-imdb/{imdbId}");
+
+        Assert.Equal(
+            HttpStatusCode.NotFound,
+            firstResponse.StatusCode);
+
+        HttpResponseMessage secondResponse =
+            await _client.GetAsync(
+                $"/api/series/by-imdb/{imdbId}");
+
+        Assert.Equal(
+            HttpStatusCode.NotFound,
+            secondResponse.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetSeriesByImdbId_WithWhitespaceImdbId_Returns400()
+    {
+        HttpResponseMessage response =
+            await _client.GetAsync(
+                "/api/series/by-imdb/%20");
+
+        Assert.Equal(
+            HttpStatusCode.BadRequest,
+            response.StatusCode);
+    }
+
     private static Result<SeriesMetadata> BuildMetadata(
         string imdbId,
         string title,
