@@ -26,11 +26,13 @@ promote released episodes, discover and process `Pending` episodes, retry due
 periodically refresh Series metadata to discover newly announced episodes. See
 [docs/architecture.md](docs/architecture.md) for the full plan.
 
-Movie catalog support exists (Phase 6.1): a movie can be added by a known IMDb id
-(metadata comes from Cinemeta) and queried. Movie **processing** (stream lookup,
-validation, `.strm` generation), autonomous movie scheduling/processing, and external-id
-discovery (finding a movie by title) are **not implemented yet** - a movie is only
-catalogued today.
+Movie support now extends beyond the Phase 6.1 catalog: a movie can be added by a known
+IMDb id, processed through stream discovery and `ffprobe` validation, and written as a
+stable Jellyfin-compatible `.strm`. Playback resolves a fresh provider source just in time
+through STRM Manager instead of persisting the ephemeral provider URL. Movie lifecycle
+maintenance also promotes released movies, retries eligible failures, and recovers
+interrupted processing. Automatic consumption of `Pending` movies by a dedicated
+processing worker and external-id/title discovery are still pending.
 
 ## Architecture
 

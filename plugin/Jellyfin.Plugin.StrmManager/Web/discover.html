@@ -327,9 +327,14 @@ state and the user re-selects/re-clicks Assistir, which is safe and idempotent s
             var PROCESSING_STATUSES = { Pending: true, Searching: true, Validating: true };
             var STATUS_POLL_INTERVAL_MS = 1500;
             var LIBRARY_POLL_INTERVAL_MS = 1500;
-            var LIBRARY_POLL_WINDOW_MS = 45000;
-            var LIBRARY_STABLE_POLLS_REQUIRED = 5;
-            var LIBRARY_STABLE_MIN_MS = 6000;
+            // Jellyfin readiness is not monotonic (a real capture showed 200 -> 404 -> 200 within seconds), so a 200 is
+            // only a candidate that must stay ready for STABLE_POLLS_REQUIRED polls spanning STABLE_MIN_MS.
+            // No new candidate may start after LIBRARY_DISCOVERY_WINDOW_MS; an existing one may keep stabilizing until
+            // LIBRARY_HARD_CAP_MS, after which no further request is started. Both are measured from the scan.
+            var LIBRARY_DISCOVERY_WINDOW_MS = 30000;
+            var LIBRARY_HARD_CAP_MS = 45000;
+            var STABLE_POLLS_REQUIRED = 5;
+            var STABLE_MIN_MS = 6000;
 
             // Bumped on every new selection - every async step below checks it before touching the DOM, so a stale
             // watch/poll chain from a previously-selected movie can never overwrite or navigate for the current one.
@@ -792,7 +797,9 @@ state and the user re-selects/re-clicks Assistir, which is safe and idempotent s
                     }
 
                     if (result.ok && result.body && result.body.itemId) {
-                        Dashboard.navigate("details?id=" + result.body.itemId);
+                        // The item already exists, so the scan is skipped - but a single 200 is never enough to
+                        // navigate (see LIBRARY_DISCOVERY_WINDOW_MS); it goes through the same stabilized poll.
+                        pollForJellyfinItem(movie, token, Date.now(), 0, null, null);
                         return;
                     }
 
@@ -830,15 +837,54 @@ state and the user re-selects/re-clicks Assistir, which is safe and idempotent s
                 });
             }
 
+            // The one place that navigates to the native Jellyfin page. Every path that wants to open the movie goes
+            // through here, and the chain schedules nothing after it.
+            function openJellyfinItem(token, itemId) {
+                if (token !== selectionToken) return;
+
+                Dashboard.navigate("details?id=" + itemId);
+            }
+
+            function failLibraryHandoff(token) {
+                setStatus(token, NOT_YET_IN_LIBRARY_MESSAGE);
+                setActivity(token, false);
+                setWatchButtonEnabled(token, true);
+            }
+
+            // Returns true once the handoff is settled (navigated or failed), meaning no further request may start.
+            // lastItemId is non-null only while the latest completed observation was a valid 200 for the candidate.
+            function settleLibraryHandoffIfDone(token, startedAt, lastItemId) {
+                var elapsed = Date.now() - startedAt;
+
+                if (elapsed >= LIBRARY_HARD_CAP_MS) {
+                    if (lastItemId !== null) {
+                        openJellyfinItem(token, lastItemId);
+                    } else {
+                        failLibraryHandoff(token);
+                    }
+                    return true;
+                }
+
+                if (lastItemId === null && elapsed >= LIBRARY_DISCOVERY_WINDOW_MS) {
+                    failLibraryHandoff(token);
+                    return true;
+                }
+
+                return false;
+            }
+
+            // stableCount / candidateSince / lastItemId travel as arguments, so all stabilization state is scoped to the
+            // chain started for one selectionToken - selecting another movie leaves any old chain unable to navigate.
             function pollForJellyfinItem(
                 movie,
                 token,
                 startedAt,
                 stableCount,
                 candidateSince,
-                candidateItemId
+                lastItemId
             ) {
                 if (token !== selectionToken) return;
+                if (settleLibraryHandoffIfDone(token, startedAt, lastItemId)) return;
 
                 fetchJson("GET", "StrmManager/Libraries/Movies/By-Imdb/" + encodeURIComponent(movie.externalId)).then(function (result) {
                     if (token !== selectionToken) return;
@@ -847,36 +893,34 @@ state and the user re-selects/re-clicks Assistir, which is safe and idempotent s
                         var now = Date.now();
                         var itemId = result.body.itemId;
 
-                        // Readiness is not monotonic while Jellyfin refreshes the item.
-                        if (candidateItemId !== itemId) {
+                        if (itemId === lastItemId) {
+                            stableCount += 1;
+                        } else if (now - startedAt < LIBRARY_DISCOVERY_WINDOW_MS) {
                             stableCount = 1;
                             candidateSince = now;
-                            candidateItemId = itemId;
+                            lastItemId = itemId;
                         } else {
-                            stableCount += 1;
+                            // The discovery window has closed, so no new (or replacement) candidate may start.
+                            stableCount = 0;
+                            candidateSince = null;
+                            lastItemId = null;
                         }
 
                         if (
-                            stableCount >= LIBRARY_STABLE_POLLS_REQUIRED &&
-                            now - candidateSince >= LIBRARY_STABLE_MIN_MS
+                            lastItemId !== null &&
+                            stableCount >= STABLE_POLLS_REQUIRED &&
+                            now - candidateSince >= STABLE_MIN_MS
                         ) {
-                            Dashboard.navigate("details?id=" + itemId);
+                            openJellyfinItem(token, lastItemId);
                             return;
                         }
 
-                        continueOrGiveUpLibraryPoll(
-                            movie,
-                            token,
-                            startedAt,
-                            stableCount,
-                            candidateSince,
-                            candidateItemId
-                        );
+                        continueOrGiveUpLibraryPoll(movie, token, startedAt, stableCount, candidateSince, lastItemId);
                         return;
                     }
 
                     if (!result.ok && result.status === 404) {
-                        // A 404 invalidates any previous successful candidate observation.
+                        // A 404 invalidates any standing candidate.
                         continueOrGiveUpLibraryPoll(movie, token, startedAt, 0, null, null);
                         return;
                     }
@@ -894,26 +938,13 @@ state and the user re-selects/re-clicks Assistir, which is safe and idempotent s
                 startedAt,
                 stableCount,
                 candidateSince,
-                candidateItemId
+                lastItemId
             ) {
                 if (token !== selectionToken) return;
-
-                if (Date.now() - startedAt >= LIBRARY_POLL_WINDOW_MS) {
-                    setStatus(token, NOT_YET_IN_LIBRARY_MESSAGE);
-                    setActivity(token, false);
-                    setWatchButtonEnabled(token, true);
-                    return;
-                }
+                if (settleLibraryHandoffIfDone(token, startedAt, lastItemId)) return;
 
                 window.setTimeout(function () {
-                    pollForJellyfinItem(
-                        movie,
-                        token,
-                        startedAt,
-                        stableCount,
-                        candidateSince,
-                        candidateItemId
-                    );
+                    pollForJellyfinItem(movie, token, startedAt, stableCount, candidateSince, lastItemId);
                 }, LIBRARY_POLL_INTERVAL_MS);
             }
 

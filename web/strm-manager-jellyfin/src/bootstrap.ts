@@ -68,8 +68,20 @@ async function bootstrap(): Promise<void> {
             jellyfinHttp,
         );
 
+        const currentUserId =
+            bridge.auth.getCurrentUserId();
+
+        if (!currentUserId) {
+            console.info(
+                `${LOG_PREFIX} Jellyfin user is not authenticated.`,
+            );
+
+            return;
+        }
+
         const jellyfinLibraryApi = createJellyfinLibraryApi(
             jellyfinHttp,
+            currentUserId,
         );
 
         const movieWatchFlow =

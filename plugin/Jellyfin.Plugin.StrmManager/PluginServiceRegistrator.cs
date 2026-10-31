@@ -1,5 +1,4 @@
 using Jellyfin.Plugin.StrmManager.Configuration;
-using Jellyfin.Plugin.StrmManager.Home;
 using Jellyfin.Plugin.StrmManager.Movies;
 using Jellyfin.Plugin.StrmManager.Processing;
 using Jellyfin.Plugin.StrmManager.StrmManagerClient;

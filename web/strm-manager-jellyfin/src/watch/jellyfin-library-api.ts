@@ -1,10 +1,17 @@
-import {
-    HttpError,
-    type HttpClient,
+import type {
+    HttpClient,
 } from '../core/http/http-client';
 
 export interface JellyfinMovieResult {
     readonly itemId: string;
+}
+
+interface JellyfinItemDto {
+    readonly Id?: string;
+}
+
+interface JellyfinItemsResponse {
+    readonly Items?: readonly JellyfinItemDto[];
 }
 
 export interface JellyfinLibraryApi {
@@ -17,30 +24,45 @@ export interface JellyfinLibraryApi {
 
 export function createJellyfinLibraryApi(
     http: HttpClient,
+    userId: string,
 ): JellyfinLibraryApi {
     return {
         async findMovieByImdb(
             imdbId: string,
         ): Promise<JellyfinMovieResult | null> {
-            try {
-                return await http.get<JellyfinMovieResult>(
-                    `/StrmManager/Libraries/Movies/By-Imdb/${encodeURIComponent(imdbId)}`,
-                );
-            } catch (error) {
-                if (
-                    error instanceof HttpError &&
-                    error.status === 404
-                ) {
-                    return null;
-                }
+            const query = new URLSearchParams({
+                Recursive: 'true',
+                IncludeItemTypes: 'Movie',
+                AnyProviderIdEquals: `imdb.${imdbId}`,
+                Limit: '2',
+            });
 
-                throw error;
+            const response =
+                await http.get<JellyfinItemsResponse>(
+                    `/Users/${encodeURIComponent(userId)}/Items?${query.toString()}`,
+                );
+
+            const items =
+                response.Items ?? [];
+
+            if (items.length === 0) {
+                return null;
             }
+
+            const itemId = items[0]?.Id;
+
+            if (!itemId) {
+                return null;
+            }
+
+            return {
+                itemId,
+            };
         },
 
         async scan(): Promise<void> {
             await http.post<unknown>(
-                '/StrmManager/Libraries/Scan',
+                '/Library/Refresh',
             );
         },
     };
